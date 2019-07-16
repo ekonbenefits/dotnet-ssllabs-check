@@ -41,7 +41,6 @@ let asyncNoOp = lazy Async.Sleep 0
 
 //Setup Console initial state and functions
 let originalColor = Console.ForegroundColor
-Console.OutputEncoding <- System.Text.Encoding.UTF8;
 
 let consoleWriter (lineEnd:string) (color:ConsoleColor) fmt =
     let write (s:string) =
@@ -55,9 +54,13 @@ let console fmt = consoleWriter String.Empty originalColor fmt
 let consoleColorN color fmt = consoleWriter Environment.NewLine color fmt 
 let consoleColor color fmt = consoleWriter String.Empty color fmt 
 
+type SslLabConfig = { OptOutputDir: string option; Emoji: bool}
 
 //Check host list against SSLLabs.com
-let sslLabs (optOutputDir: string option) (hosts:string seq) =
+let sslLabs (config: SslLabConfig) (hosts:string seq) =
+    let emoji s = if config.Emoji then s else String.Empty
+    if config.Emoji then
+        Console.OutputEncoding <- System.Text.Encoding.UTF8
     async {
         let! es =
             asyncSeq{
@@ -87,7 +90,7 @@ let sslLabs (optOutputDir: string option) (hosts:string seq) =
                         do!
                             option {
                                         let! data = finalData
-                                        let! outDir = optOutputDir
+                                        let! outDir = config.OptOutputDir
                                         let outPath = Path.Combine(outDir, sprintf "%s.json" host)
                                         return File.WriteAllTextAsync(outPath, data.JsonValue.ToString()) |> Async.AwaitTask
                             } |?-> asyncNoOp
@@ -175,10 +178,10 @@ let sslLabs (optOutputDir: string option) (hosts:string seq) =
                         yield ErrorStatus.ExceptionThrown
             } |> AsyncSeq.fold (|||) ErrorStatus.Okay
         if es = ErrorStatus.Okay then
-            consoleN "All Clear 😃."
+            consoleN "All Clear %s." (emoji "😃")
         else
-            let scream = "😱"
-            let frown = "😦"
+            let scream = emoji "😱"
+            let frown = emoji "😦"
             consoleN "Found Error(s) %s: %A" (if es <= ErrorStatus.GradeB then frown else scream) es
         return int es
     }
