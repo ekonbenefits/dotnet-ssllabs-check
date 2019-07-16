@@ -33,6 +33,9 @@ type CertIssue = Okay = 0
                  | InsecureSignature = 256
                  | InsecureKey = 512
 
+type SslLabsError = Ready | Dns | InProgress | Error
+let parseSslLabsError = function | "READY" -> Ready | "DNS" -> Dns | "IN_PROGRESS" -> InProgress | _ -> Error
+
 let prePolling = 5_000
 let inProgPolling = 10_000
 
@@ -63,27 +66,29 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
         Console.OutputEncoding <- System.Text.Encoding.UTF8
     async {
         let! es =
-            asyncSeq{
-               
+            asyncSeq {
                 for host in hosts do
-                    let polledData = asyncSeq {
-                        let mutable startNew = "on"
-                        while true do
-                            let! data = SslLabsHost.AsyncLoad(sprintf "%s/analyze?host=%s&startNew=%s&all=done" baseUrl host startNew)
-                            startNew <- "off"
-                            match data.Status with
-                                | "DNS" -> do! Async.Sleep prePolling
-                                | "IN_PROGRESS" -> do! Async.Sleep inProgPolling
-                                | "READY" -> yield data
-                                | _ -> 
-                                      let statusMessage = data.JsonValue.Item("statusMessage").ToString()
-                                      raise (Exception(sprintf "Error Analyzing %s - %s" host statusMessage))
+                    let rec polledData startNew = asyncSeq {
+                        let analyze = sprintf "%s/analyze?host=%s&startNew=%s&all=done"
+                        let! data = SslLabsHost.AsyncLoad(analyze baseUrl host startNew)
+                        let status = parseSslLabsError data.Status
+                        match status with
+                            | Error -> 
+                                  let statusMessage = data.JsonValue.Item("statusMessage").ToString()
+                                  raise (Exception(sprintf "Error Analyzing %s - %s" host statusMessage))
+                            | Ready -> yield data
+                            | Dns -> 
+                                do! Async.Sleep prePolling
+                                yield! polledData "off"
+                            | InProgress -> 
+                                do! Async.Sleep inProgPolling
+                                yield! polledData "off"
                     }
                     try 
                         let l,t = Console.CursorLeft, Console.CursorTop
                         let startTime = DateTime.UtcNow
                         consoleN "%s ..." host
-                        let! finalData = polledData |> AsyncSeq.tryFirst
+                        let! finalData = polledData "on" |> AsyncSeq.tryFirst
                         Console.SetCursorPosition(l,t)
                         consoleN "%s (%O): " host (DateTime.UtcNow - startTime)
                         //If output directory specified, write out json data.
