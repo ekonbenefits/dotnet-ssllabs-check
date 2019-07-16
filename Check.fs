@@ -94,6 +94,9 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
         let! es =
             asyncSeq {
                 for host in hosts do
+                    //I was unsure with asyncSeq if this construction would produced unlimited stack frames,
+                    //IL was too complicated, ran debugger on slow site (over 7 minutes of polling)
+                    //stack was quite shallow!!
                     let rec polledData startNew = asyncSeq {
                         let analyze = sprintf "%s/analyze?host=%s&startNew=%s&all=done"
                         let! data = SslLabsHost.AsyncLoad(analyze baseUrl host startNew)
