@@ -1,4 +1,19 @@
-﻿module Check
+﻿(*
+   Copyright 2019 Ekon Benefits
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*)
+module Check
 
 open System
 open System.IO
@@ -33,9 +48,20 @@ type CertIssue = Okay = 0
                  | InsecureSignature = 256
                  | InsecureKey = 512
 
-type SslLabsError = Ready | Dns | InProgress | Error
-let parseSslLabsError = function | "READY" -> Ready | "DNS" -> Dns | "IN_PROGRESS" -> InProgress | _ -> Error
+type SslLabsError = 
+    Ready
+    | Dns
+    | InProgress
+    | Error
 
+let parseSslLabsError = 
+    function | "READY" -> Ready 
+             | "DNS" -> Dns 
+             | "IN_PROGRESS" -> InProgress 
+             | _ -> Error
+
+//Polling suggestion from the api docs 
+//https://github.com/ssllabs/ssllabs-scan/blob/master/ssllabs-api-docs-v3.md#access-rate-and-rate-limiting
 let prePolling = 5_000
 let inProgPolling = 10_000
 
@@ -148,7 +174,7 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                                         yield status  
 
                                 let (|Grade|_|) (g:string) (i:string) = if i.Contains(g) then Some () else None
-                                
+                                //Check grades (per endpont & host)
                                 for ep in data.Endpoints do
                                     consoleN "  Endpoint '%s': " ep.IpAddress
                                     let status, color = 
@@ -161,8 +187,10 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                                     yield status
 
                             } |> Seq.fold (|||) ErrorStatus.Okay
+                        //Error Summary
                         if hostEs <> ErrorStatus.Okay then
                             consoleN "  Has Error(s): %A" hostEs
+                        //SSL Labs link
                         consoleN "  Details:"
                         consoleN "    https://www.ssllabs.com/ssltest/analyze.html?d=%s" host
                         yield hostEs
