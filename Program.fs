@@ -22,14 +22,22 @@ let OptionToOption (opt:CommandOption<'T>) =
     else
         None
 
+
+
 [<EntryPoint>]
 let main argv =
     use app = new CommandLineApplication();
     app.HelpOption() |> ignore;
-    let optOutDir = app.Option<string>("-o|--output <DIRECTORY>", "Output Directory for optional json data [Default: don't write out data]", CommandOptionType.SingleValue)
-    let optEmoji = app.Option<bool> ("--emoji", "Use emoji's when outputing to console", CommandOptionType.NoValue)
-    let hosts = app.Argument<string>("Hosts", "Hosts to check SSL Grades and Validity", multipleValues=true).IsRequired();
 
+    let optOutDir = app.Option<string>("-o|--output <DIRECTORY>", 
+                                       "Output Directory for optional json data [Default: don't write out data]",
+                                       CommandOptionType.SingleValue)
+
+    let optEmoji = app.Option<bool>("--emoji", 
+                                    "Use emoji's when outputing to console", 
+                                    CommandOptionType.NoValue)
+    
+    let hosts = app.Argument<string>("Hosts", "Hosts to check SSL Grades and Validity", multipleValues=true).IsRequired();
 
     app.OnExecute(Func<int>(
                     fun ()->
