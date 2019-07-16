@@ -23,7 +23,9 @@ open FSharp.Interop.Compose.Linq
 open FSharp.Interop.NullOptAble
 open FSharp.Interop.NullOptAble.Operators
 
-type SslLabsHost = JsonProvider<"Sample.json">
+type SslLabsHost = JsonProvider<"samples/host.json">
+type SslLabsInfo = JsonProvider<"samples/info.json">
+
 let baseUrl = "https://api.ssllabs.com/api/v3"
 
 [<Flags>]
@@ -93,6 +95,15 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
         Console.OutputEncoding <- System.Text.Encoding.UTF8
     //Main Logic
     async {
+        
+        //Print out SSL Labs Info
+        let! info = SslLabsInfo.AsyncLoad(sprintf "%s/info" baseUrl)
+        consoleN "ssllabs-check Unofficial Client (engine:%s) (criteria:%s)" info.EngineVersion info.CriteriaVersion
+        consoleN ""
+        for m in info.Messages do
+            consoleN "%s" m
+            consoleN ""
+
         let! es =
             asyncSeq {
                 for host in hosts do

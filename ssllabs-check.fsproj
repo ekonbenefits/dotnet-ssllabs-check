@@ -6,6 +6,7 @@
     <RootNamespace>ssllabs_check</RootNamespace>
     <Copyright>Copyright 2019 Ekon Benefits</Copyright>
   </PropertyGroup>
+  
   <PropertyGroup Condition=" '$(RuntimeIdentifier)' == '' ">
     <ToolCommandName>ssllabs-check</ToolCommandName>
     <PackAsTool>true</PackAsTool>
@@ -20,11 +21,12 @@
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <PackageProjectUrl>https://github.com/ekonbenefits/dotnet-ssllabs-check</PackageProjectUrl>
-    <Version>1.0.1</Version>
+    <Version>1.0.2</Version>
   </PropertyGroup>
 
   <ItemGroup>
-    <Content Include="Sample.json" />
+    <Content Include="samples\host.json" />
+    <Content Include="samples\info.json" />
     <Compile Include="Check.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
