@@ -13,12 +13,13 @@
     <Authors>Jay Tuley</Authors>
     <Owners>jbtule EkonBenefits</Owners>
     <Company>Ekon Benefits</Company>
-    <Description>Tool to check hosts against SSLLabs Api.</Description>
+    <Description>Tool that will check ssllabs score api and cert expiration when provided a list of hosts.</Description>
     <PackageOutputPath>./nupkg</PackageOutputPath>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <PackageTags>ssl labs scan check</PackageTags>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <PackageProjectUrl>https://github.com/ekonbenefits/dotnet-ssllabs-check</PackageProjectUrl>
     <Version>1.0.0</Version>
   </PropertyGroup>
 
