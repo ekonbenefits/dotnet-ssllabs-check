@@ -87,9 +87,11 @@ type SslLabConfig = { OptOutputDir: string option; Emoji: bool}
 
 //Check host list against SSLLabs.com
 let sslLabs (config: SslLabConfig) (hosts:string seq) =
+    //Configure if showing emoji
     let emoji s = if config.Emoji then s else String.Empty
     if config.Emoji then
         Console.OutputEncoding <- System.Text.Encoding.UTF8
+    //Main Logic
     async {
         let! es =
             asyncSeq {
@@ -129,7 +131,7 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                                         let outPath = Path.Combine(outDir, sprintf "%s.json" host)
                                         return File.WriteAllTextAsync(outPath, data.JsonValue.ToString()) |> Async.AwaitTask
                             } |?-> asyncNoOp
-
+                        //Check a single Host and bitwise OR error codes.
                         let hostEs =  
                             chooseSeq {
                                 let! data = finalData
@@ -197,6 +199,7 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                         //SSL Labs link
                         consoleN "  Details:"
                         consoleColorN ConsoleColor.DarkBlue "    https://www.ssllabs.com/ssltest/analyze.html?d=%s" host
+                        //yield host error codes to be bitwise or'd into final summary
                         yield hostEs
                     with ex -> 
                         consoleN "Unexpected Error (%s)" host
@@ -214,6 +217,7 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                         printExn ex
                         yield ErrorStatus.ExceptionThrown
             } |> AsyncSeq.fold (|||) ErrorStatus.Okay
+        //Final Error Summary
         if es = ErrorStatus.Okay then
             consoleN "All Clear%s." (emoji " 😃")
         else
