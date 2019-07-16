@@ -92,9 +92,15 @@ type SslLabConfig = { OptOutputDir: string option; Emoji: bool}
 let assmVer = System.Reflection.Assembly.GetEntryAssembly().GetName().Version
 let userAgent = sprintf "dotnet-ssllabs-check v%O" assmVer
 
-let parseReq parseF req =
-    match req.Body with
-    | Text text -> {|Data = parseF text; Status = req.StatusCode; MaxAssesments = int req.Headers.["X-Max-Assessments"] ; CurrentAssesments = int req.Headers.["X-Current-Assessments"] |}
+let parseReq parseF resp =
+    match resp.Body with
+    | Text text -> 
+        {|
+            Data = option { if resp.StatusCode = HttpStatusCodes.OK then return parseF text}
+            Status = resp.StatusCode
+            MaxAssesments = int resp.Headers.["X-Max-Assessments"]
+            CurrentAssesments = int resp.Headers.["X-Current-Assessments"] 
+        |}
     | _ -> failwith "Request did not return text";
 
 let request parseF api  = async {
@@ -107,6 +113,7 @@ let requestQ parseF api q = async{
         return parseReq parseF resp
     }
 
+let failWithHttpStatus status = failwithf "Service Returned Status %i" status
 
 //Check host list against SSLLabs.com
 let sslLabs (config: SslLabConfig) (hosts:string seq) =
@@ -118,40 +125,68 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
     async {
         //Print out SSL Labs Info
         let! info = request SslLabsInfo.Parse "/info"
-        consoleN "%s - Unofficial Client - (engine:%s) (criteria:%s)" userAgent info.Data.EngineVersion info.Data.CriteriaVersion
-        consoleN ""
-        for m in info.Data.Messages do
-            consoleN "%s" m
-            consoleN ""
-        consoleN "Started: %O" DateTime.Now
-        consoleN ""
+        let newCoolOff, cur1st, max1st =
+            match info.Data with
+            | Some i ->
+                consoleN "%s - Unofficial Client - (engine:%s) (criteria:%s)" userAgent i.EngineVersion i.CriteriaVersion
+                consoleN ""
+                for m in i.Messages do
+                    consoleN "%s" m
+                    consoleN ""
+                consoleN "Started: %O" DateTime.Now
+                consoleN ""
+                if i.MaxAssessments <= 0 then
+                    consoleN "Service is not allowing you to request new assessments."
+                i.NewAssessmentCoolOff,i.CurrentAssessments,i.MaxAssessments
+            | None -> 
+                consoleN "%s - Unofficial Client - service unavailable" userAgent
+                failWithHttpStatus info.Status
         let! es =
             asyncSeq {
                 for host in hosts do
                     //I was unsure with asyncSeq if this construction would produced unlimited stack frames,
                     //IL was too complicated, ran debugger on slow site (over 7 minutes of polling)
                     //stack was quite shallow!!
-                    let rec polledData startNew = asyncSeq {
+                    let rec polledData startNew current max = asyncSeq {
+                        if startNew = "on" then
+                            do! Async.Sleep newCoolOff
                         let! analyze = requestQ SslLabsHost.Parse "/analyze" ["host", host; "startNew", startNew; "all", "done"]
-                        let status = parseSslLabsError analyze.Data.Status
-                        match status with
-                            | Error -> 
-                                  let statusMessage = analyze.Data.JsonValue.Item("statusMessage").ToString()
-                                  failwithf "Error Analyzing %s - %s" host statusMessage
-                            | Ready -> yield analyze.Data
-                            | Dns -> 
-                                do! Async.Sleep prePolling
-                                yield! polledData "off"
-                            | InProgress -> 
-                                do! Async.Sleep inProgPolling
-                                yield! polledData "off"
+                        match analyze.Data with
+                        | Some data ->
+                            let status = parseSslLabsError data.Status
+                            match status with
+                                | Error -> 
+                                      let statusMessage = data.JsonValue.Item("statusMessage").ToString()
+                                      failwithf "Error Analyzing %s - %s" host statusMessage
+                                | Ready -> yield data
+                                | Dns -> 
+                                    do! Async.Sleep prePolling
+                                    yield! polledData "off" analyze.CurrentAssesments analyze.MaxAssesments
+                                | InProgress -> 
+                                    do! Async.Sleep inProgPolling
+                                    yield! polledData "off" analyze.CurrentAssesments analyze.MaxAssesments
+                        | None ->
+                            let random = Random()
+                            match analyze.Status with
+                            | HttpStatusCodes.TooManyRequests -> 
+                                do! Async.Sleep newCoolOff 
+                                yield! polledData startNew analyze.CurrentAssesments analyze.MaxAssesments
+                            | HttpStatusCodes.ServiceUnavailable  -> 
+                                let delay = random.Next(15_000, 30_000)
+                                consoleN "Service Unavailable trying again for '%s' in %O." host <| TimeSpan.FromMilliseconds(float delay)
+                                do! Async.Sleep <| delay
+                            | 529 (* overloaded *)  -> 
+                                let delay = random.Next(30_000, 45_000)
+                                consoleN "Service Unavailable trying again for '%s' in %O." host <| TimeSpan.FromMilliseconds(float delay)
+                                do! Async.Sleep <| delay
+                            | x -> failWithHttpStatus x
                     }
                     try 
                         let oldPos = Console.CursorLeft, Console.CursorTop
                         let startTime = DateTime.UtcNow
                         consoleN "%s ..." host
                         Console.SetCursorPosition(oldPos)
-                        let! finalData = polledData "on" |> AsyncSeq.tryFirst
+                        let! finalData = polledData "on" cur1st max1st |> AsyncSeq.tryFirst
                         consoleN "%s (%O): " host (DateTime.UtcNow - startTime)
                         //If output directory specified, write out json data.
                         do!
