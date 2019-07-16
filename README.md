@@ -1,5 +1,5 @@
 
-# dotnet-ssllabs-check
+# dotnet-ssllabs-check ![Nuget](https://img.shields.io/nuget/v/dotnet-ssllabs-check.svg)
 
 Tool that will check ssllabs score api and cert expiration when provided a list of hosts.
 
