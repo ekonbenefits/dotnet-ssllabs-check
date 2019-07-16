@@ -193,7 +193,7 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                             consoleN "  Has Error(s): %A" hostEs
                         //SSL Labs link
                         consoleN "  Details:"
-                        consoleN "    https://www.ssllabs.com/ssltest/analyze.html?d=%s" host
+                        consoleColorN ConsoleColor.DarkBlue "    https://www.ssllabs.com/ssltest/analyze.html?d=%s" host
                         yield hostEs
                     with ex -> 
                         consoleN "Unexpected Error (%s)" host
@@ -212,10 +212,10 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                         yield ErrorStatus.ExceptionThrown
             } |> AsyncSeq.fold (|||) ErrorStatus.Okay
         if es = ErrorStatus.Okay then
-            consoleN "All Clear %s." (emoji "😃")
+            consoleN "All Clear%s." (emoji " 😃")
         else
-            let scream = emoji "😱"
-            let frown = emoji "😦"
-            consoleN "Found Error(s) %s: %A" (if es <= ErrorStatus.GradeB then frown else scream) es
+            let scream = emoji " 😱"
+            let frown = emoji " 😦"
+            consoleN "Found Error(s)%s: %A" (if es <= ErrorStatus.GradeB then frown else scream) es
         return int es
     }
