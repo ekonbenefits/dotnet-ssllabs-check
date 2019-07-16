@@ -3,6 +3,12 @@
 
 Tool that will check ssllabs score api and cert expiration when provided a list of hosts.
 
+# Notice
+ 
+This is an Unofficial tool, using the [SSL Labs API v3](https://github.com/ssllabs/ssllabs-scan/blob/master/ssllabs-api-docs-v3.md). See the SSL Labs [terms of use](https://www.ssllabs.com/downloads/Qualys_SSL_Labs_Terms_of_Use.pdf). This tool works by
+sending assessment requests to remote SSL Labs servers and that information will be shared with SSL Labs.
+
+
 # Install
 
 ```bash
