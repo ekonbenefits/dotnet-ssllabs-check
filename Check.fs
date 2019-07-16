@@ -23,6 +23,8 @@ open FSharp.Interop.Compose.Linq
 open FSharp.Interop.NullOptAble
 open FSharp.Interop.NullOptAble.Operators
 
+module Hdr = FSharp.Data.HttpRequestHeaders
+
 type SslLabsHost = JsonProvider<"samples/host.json">
 type SslLabsInfo = JsonProvider<"samples/info.json">
 
@@ -89,10 +91,21 @@ type SslLabConfig = { OptOutputDir: string option; Emoji: bool}
 
 let assmVer = System.Reflection.Assembly.GetEntryAssembly().GetName().Version
 let userAgent = sprintf "dotnet-ssllabs-check v%O" assmVer
-let request api  = 
-    Http.AsyncRequestString(baseUrl + api, headers = [("user-agent", userAgent)])
-let requestQ api q = 
-    Http.AsyncRequestString(baseUrl + api, q, [("user-agent", userAgent)])
+
+let parseReq parseF req =
+    match req.Body with
+    | Text text -> {|Data = parseF text; Status = req.StatusCode; MaxAssesments = int req.Headers.["X-Max-Assessments"] ; CurrentAssesments = int req.Headers.["X-Current-Assessments"] |}
+    | _ -> failwith "Request did not return text";
+
+let request parseF api  = async {
+        let! resp = Http.AsyncRequest(baseUrl + api, headers = [Hdr.UserAgent userAgent])
+        return parseReq parseF resp
+    }
+
+let requestQ parseF api q = async{
+        let! resp = Http.AsyncRequest(baseUrl + api, q, headers = [Hdr.UserAgent userAgent])
+        return parseReq parseF resp
+    }
 
 
 //Check host list against SSLLabs.com
@@ -104,11 +117,10 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
     //Main Logic
     async {
         //Print out SSL Labs Info
-        let! infoReq = request "/info"
-        let info = SslLabsInfo.Parse(infoReq)
-        consoleN "%s - Unofficial Client - (engine:%s) (criteria:%s)" userAgent info.EngineVersion info.CriteriaVersion
+        let! info = request SslLabsInfo.Parse "/info"
+        consoleN "%s - Unofficial Client - (engine:%s) (criteria:%s)" userAgent info.Data.EngineVersion info.Data.CriteriaVersion
         consoleN ""
-        for m in info.Messages do
+        for m in info.Data.Messages do
             consoleN "%s" m
             consoleN ""
         consoleN "Started: %O" DateTime.Now
@@ -120,14 +132,13 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                     //IL was too complicated, ran debugger on slow site (over 7 minutes of polling)
                     //stack was quite shallow!!
                     let rec polledData startNew = asyncSeq {
-                        let! analyze = requestQ "/analyze" ["host", host; "startNew", startNew; "all", "done"]
-                        let data = SslLabsHost.Parse(analyze)
-                        let status = parseSslLabsError data.Status
+                        let! analyze = requestQ SslLabsHost.Parse "/analyze" ["host", host; "startNew", startNew; "all", "done"]
+                        let status = parseSslLabsError analyze.Data.Status
                         match status with
                             | Error -> 
-                                  let statusMessage = data.JsonValue.Item("statusMessage").ToString()
-                                  raise (Exception(sprintf "Error Analyzing %s - %s" host statusMessage))
-                            | Ready -> yield data
+                                  let statusMessage = analyze.Data.JsonValue.Item("statusMessage").ToString()
+                                  failwithf "Error Analyzing %s - %s" host statusMessage
+                            | Ready -> yield analyze.Data
                             | Dns -> 
                                 do! Async.Sleep prePolling
                                 yield! polledData "off"
