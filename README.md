@@ -1,7 +1,7 @@
 
 # dotnet-ssllabs-check
 
-Tool to check ssllabs.com score and expiration of a list of hosts
+Tool that will check ssllabs score api and cert expiration when provided a list of hosts.
 
 ```bash
 Usage: ssllabs-check [options] <Hosts>
