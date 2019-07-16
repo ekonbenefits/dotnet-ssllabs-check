@@ -8,7 +8,7 @@ open FSharp.Interop.Compose.Linq
 open FSharp.Interop.NullOptAble
 open FSharp.Interop.NullOptAble.Operators
 
-type sslLabsHost = JsonProvider<"Sample.json">
+type SslLabsHost = JsonProvider<"Sample.json">
 let baseUrl = "https://api.ssllabs.com/api/v3"
 
 [<Flags>]
@@ -66,7 +66,7 @@ let sslLabs (optOutputDir: string option) (hosts:string seq) =
                     let polledData = asyncSeq {
                         let mutable startNew = "on"
                         while true do
-                            let! data = sslLabsHost.AsyncLoad(sprintf "%s/analyze?host=%s&startNew=%s&all=done" baseUrl host startNew)
+                            let! data = SslLabsHost.AsyncLoad(sprintf "%s/analyze?host=%s&startNew=%s&all=done" baseUrl host startNew)
                             startNew <- "off"
                             match data.Status with
                                 | "DNS" -> do! Async.Sleep prePolling
