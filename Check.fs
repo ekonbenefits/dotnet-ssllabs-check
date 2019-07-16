@@ -87,6 +87,14 @@ let consoleColor color fmt = consoleWriter String.Empty color fmt
 
 type SslLabConfig = { OptOutputDir: string option; Emoji: bool}
 
+let assmVer = System.Reflection.Assembly.GetEntryAssembly().GetName().Version
+let userAgent = sprintf "dotnet-ssllabs-check v%O" assmVer
+let request api  = 
+    Http.AsyncRequestString(baseUrl + api, headers = [("user-agent", userAgent)])
+let requestQ api q = 
+    Http.AsyncRequestString(baseUrl + api, q, [("user-agent", userAgent)])
+
+
 //Check host list against SSLLabs.com
 let sslLabs (config: SslLabConfig) (hosts:string seq) =
     //Configure if showing emoji
@@ -95,10 +103,10 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
         Console.OutputEncoding <- System.Text.Encoding.UTF8
     //Main Logic
     async {
-        let assmVer = System.Reflection.Assembly.GetEntryAssembly().GetName().Version
         //Print out SSL Labs Info
-        let! info = SslLabsInfo.AsyncLoad(sprintf "%s/info" baseUrl)
-        consoleN "ssllabs-check Unofficial Client v%O (engine:%s) (criteria:%s)" assmVer info.EngineVersion info.CriteriaVersion
+        let! infoReq = request "/info"
+        let info = SslLabsInfo.Parse(infoReq)
+        consoleN "%s - Unofficial Client - (engine:%s) (criteria:%s)" userAgent info.EngineVersion info.CriteriaVersion
         consoleN ""
         for m in info.Messages do
             consoleN "%s" m
@@ -112,8 +120,8 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                     //IL was too complicated, ran debugger on slow site (over 7 minutes of polling)
                     //stack was quite shallow!!
                     let rec polledData startNew = asyncSeq {
-                        let analyze = sprintf "%s/analyze?host=%s&startNew=%s&all=done"
-                        let! data = SslLabsHost.AsyncLoad(analyze baseUrl host startNew)
+                        let! analyze = requestQ "/analyze" ["host", host; "startNew", startNew; "all", "done"]
+                        let data = SslLabsHost.Parse(analyze)
                         let status = parseSslLabsError data.Status
                         match status with
                             | Error -> 
