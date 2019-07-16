@@ -114,11 +114,11 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                                 yield! polledData "off"
                     }
                     try 
-                        let l,t = Console.CursorLeft, Console.CursorTop
+                        let oldPos = Console.CursorLeft, Console.CursorTop
                         let startTime = DateTime.UtcNow
                         consoleN "%s ..." host
                         let! finalData = polledData "on" |> AsyncSeq.tryFirst
-                        Console.SetCursorPosition(l,t)
+                        Console.SetCursorPosition(oldPos)
                         consoleN "%s (%O): " host (DateTime.UtcNow - startTime)
                         //If output directory specified, write out json data.
                         do!
