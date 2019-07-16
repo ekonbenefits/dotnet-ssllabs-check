@@ -18,6 +18,6 @@ Options:
 ## Features
 
 - Clearly Displays time to expiration for leaf certificates (if RSA and EC are both served both are listed).
-- Highlights expiring certificates if 90 Days, if certificate validatity period is 90 days or under the uses 30 days.
-- Shows SSL Grade per Host and IP address. 
+- Highlights expiring certificates if 90 Days, if certificate validatity period is 90 days or under then uses 30 days.
+- Shows SSL Grade per Host and IP address combo. 
 - Error Codes types are combined for exit code with bitwise or.
