@@ -147,10 +147,10 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                     //I was unsure with asyncSeq if this construction would produced unlimited stack frames,
                     //IL was too complicated, ran debugger on slow site (over 7 minutes of polling)
                     //stack was quite shallow!!
-                    let rec polledData startNew current max = asyncSeq {
-                        if startNew = "on" then
+                    let rec polledData startQ current max = asyncSeq {
+                        if not <| List.isEmpty startQ then
                             do! Async.Sleep newCoolOff
-                        let! analyze = requestQ SslLabsHost.Parse "/analyze" ["host", host; "startNew", startNew; "all", "done"]
+                        let! analyze = requestQ SslLabsHost.Parse "/analyze" <| ["host", host; "all", "done"] @ startQ
                         match analyze.Data with
                         | Some data ->
                             let status = parseSslLabsError data.Status
@@ -161,16 +161,16 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                                 | Ready -> yield data
                                 | Dns -> 
                                     do! Async.Sleep prePolling
-                                    yield! polledData "off" analyze.CurrentAssesments analyze.MaxAssesments
+                                    yield! polledData [] analyze.CurrentAssesments analyze.MaxAssesments
                                 | InProgress -> 
                                     do! Async.Sleep inProgPolling
-                                    yield! polledData "off" analyze.CurrentAssesments analyze.MaxAssesments
+                                    yield! polledData [] analyze.CurrentAssesments analyze.MaxAssesments
                         | None ->
                             let random = Random()
                             match analyze.Status with
                             | HttpStatusCodes.TooManyRequests -> 
                                 do! Async.Sleep newCoolOff 
-                                yield! polledData startNew analyze.CurrentAssesments analyze.MaxAssesments
+                                yield! polledData startQ analyze.CurrentAssesments analyze.MaxAssesments
                             | HttpStatusCodes.ServiceUnavailable  -> 
                                 let delay = random.Next(15_000, 30_000)
                                 consoleN "Service Unavailable trying again for '%s' in %O." host <| TimeSpan.FromMilliseconds(float delay)
@@ -186,7 +186,7 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                         let startTime = DateTime.UtcNow
                         consoleN "%s ..." host
                         Console.SetCursorPosition(oldPos)
-                        let! finalData = polledData "on" cur1st max1st |> AsyncSeq.tryFirst
+                        let! finalData = polledData ["startNew","on"] cur1st max1st |> AsyncSeq.tryFirst
                         consoleN "%s (%O): " host (DateTime.UtcNow - startTime)
                         //If output directory specified, write out json data.
                         do!
