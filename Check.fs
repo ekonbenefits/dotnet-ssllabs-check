@@ -122,6 +122,7 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                             option {
                                         let! data = finalData
                                         let! outDir = config.OptOutputDir
+                                        Directory.CreateDirectory outDir |> ignore
                                         let outPath = Path.Combine(outDir, sprintf "%s.json" host)
                                         return File.WriteAllTextAsync(outPath, data.JsonValue.ToString()) |> Async.AwaitTask
                             } |?-> asyncNoOp
