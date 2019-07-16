@@ -95,15 +95,16 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
         Console.OutputEncoding <- System.Text.Encoding.UTF8
     //Main Logic
     async {
-        
+        let assmVer = System.Reflection.Assembly.GetEntryAssembly().GetName().Version
         //Print out SSL Labs Info
         let! info = SslLabsInfo.AsyncLoad(sprintf "%s/info" baseUrl)
-        consoleN "ssllabs-check Unofficial Client (engine:%s) (criteria:%s)" info.EngineVersion info.CriteriaVersion
+        consoleN "ssllabs-check Unofficial Client v%O (engine:%s) (criteria:%s)" assmVer info.EngineVersion info.CriteriaVersion
         consoleN ""
         for m in info.Messages do
             consoleN "%s" m
             consoleN ""
-
+        consoleN "Started: %O" DateTime.Now
+        consoleN ""
         let! es =
             asyncSeq {
                 for host in hosts do
@@ -210,6 +211,7 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                         //SSL Labs link
                         consoleN "  Details:"
                         consoleColorN ConsoleColor.DarkBlue "    https://www.ssllabs.com/ssltest/analyze.html?d=%s" host
+                        consoleN ""
                         //yield host error codes to be bitwise or'd into final summary
                         yield hostEs
                     with ex -> 
@@ -226,9 +228,11 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                                         consoleN "%s" singleEx.StackTrace
                                         printExn singleEx.InnerException
                         printExn ex
+                        consoleN ""
                         yield ErrorStatus.ExceptionThrown
             } |> AsyncSeq.fold (|||) ErrorStatus.Okay
         //Final Error Summary
+        consoleN "Completed: %O" DateTime.Now
         if es = ErrorStatus.Okay then
             consoleN "All Clear%s." (emoji " 😃")
         else
