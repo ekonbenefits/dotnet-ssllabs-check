@@ -17,7 +17,6 @@ module Check
 
 open System
 open System.IO
-open System.Collections.Concurrent
 open FSharp.Control
 open FSharp.Data
 open FSharp.Interop.Compose.Linq
@@ -28,14 +27,6 @@ module Hdr = FSharp.Data.HttpRequestHeaders
 
 type SslLabsHost = JsonProvider<"samples/host.json">
 type SslLabsInfo = JsonProvider<"samples/info.json">
-
-type IJsonDocument = FSharp.Data.Runtime.BaseTypes.IJsonDocument
-
-let toIJsonDocOption target : IJsonDocument option =
-    target |> Option.map (fun x-> upcast x)
-
-let baseUrl = "https://api.ssllabs.com/api/v3"
-
 [<Flags>]
 type ErrorStatus = Okay = 0 
                    | Expiring = 1 
@@ -44,7 +35,6 @@ type ErrorStatus = Okay = 0
                    | NotGradeAOrB = 8 
                    | Expired = 16 
                    | ExceptionThrown = 32
-
 [<Flags>]
 type CertIssue = Okay = 0
                  | NoChainOfTrust = 1
@@ -57,48 +47,51 @@ type CertIssue = Okay = 0
                  | Blacklisted = 128
                  | InsecureSignature = 256
                  | InsecureKey = 512
-
 type SslLabsError = 
     Ready
     | Dns
     | InProgress
     | Error
-
 let parseSslLabsError = 
     function | "READY" -> Ready 
              | "DNS" -> Dns 
              | "IN_PROGRESS" -> InProgress 
              | _ -> Error
+let asyncNoOp = lazy Async.Sleep 0
+type IJsonDocument = FSharp.Data.Runtime.BaseTypes.IJsonDocument
+let toIJsonDocOption target : IJsonDocument option =
+    target |> Option.map (fun x-> upcast x)
 
-//Polling suggestion from the api docs 
-//https://github.com/ssllabs/ssllabs-scan/blob/master/ssllabs-api-docs-v3.md#access-rate-and-rate-limiting
+//Constants suggestion from the api docs
+// https://github.com/ssllabs/ssllabs-scan/blob/master/ssllabs-api-docs-v3.md#access-rate-and-rate-limiting
+let baseUrl = "https://api.ssllabs.com/api/v3"
 let prePolling = 5_000
 let inProgPolling = 10_000
-
-let asyncNoOp = lazy Async.Sleep 0
-
+let private random = Random()
+let serviceUnavailablePolling () =
+    random.Next(15_000, 30_000)
+    |> float
+    |> TimeSpan.FromMilliseconds
+let serviceOverloadedPolling () =
+    random.Next(30_000, 45_000)
+    |> float
+    |> TimeSpan.FromMilliseconds
 
 //Setup Console initial state and functions
 let originalColor = Console.ForegroundColor
-
-
 type ResultStream =
     | ConsoleColorText of string * ConsoleColor
     | AddStatus of ErrorStatus
-
-let consoleStreamWriter (lineEnd:string) (color:ConsoleColor)  fmt =
+let private consoleStreamWriter (lineEnd:string) (color:ConsoleColor)  fmt =
     let write (s:string) =
         ConsoleColorText(s + lineEnd, color)
     Printf.kprintf write fmt
-
- 
 let consoleN fmt = consoleStreamWriter Environment.NewLine originalColor fmt
 let consoleNN fmt = consoleStreamWriter (Environment.NewLine + Environment.NewLine) originalColor fmt 
 let console fmt = consoleStreamWriter String.Empty originalColor fmt 
 let consoleColorN color fmt = consoleStreamWriter Environment.NewLine color fmt 
 let consoleColorNN color fmt = consoleStreamWriter (Environment.NewLine + Environment.NewLine)  color fmt 
 let consoleColor color fmt = consoleStreamWriter String.Empty color fmt 
-
 let private consoleMonitor = obj()
 let stdoutOrStatus (result:ResultStream) =
     match result with
@@ -111,30 +104,27 @@ let stdoutOrStatus (result:ResultStream) =
                 ErrorStatus.Okay
         )
     | AddStatus e -> e
-
 let stdout (result:ResultStream) =
     result |> stdoutOrStatus |> ignore
 
-type SslLabConfig = { OptOutputDir: string option; Emoji: bool}
-
-let assmVer = System.Reflection.Assembly.GetEntryAssembly().GetName().Version
-let userAgent = sprintf "dotnet-ssllabs-check v%O" assmVer
-
+// Global Assement quote variable to track when to slow down assessments when there are too many
 let assessmentTrack = ref (0,0)
-
 let updateAssessmentReq curr max =
     lock assessmentTrack (fun () -> assessmentTrack := curr,max)
-
 let checkAllowedNewAssessment () =
-    lock assessmentTrack (fun () ->
+    lock assessmentTrack (
+        fun () ->
             let curr,max = !assessmentTrack
             if max <= 0 then
                 failwithf "Service is not allowing you to request new assessments (%i, %i). " curr max
             else
                 curr < max
-        )
+    )
 
-let parseReq parseF resp =
+// HTTP Request Code
+let assmVer = System.Reflection.Assembly.GetEntryAssembly().GetName().Version
+let userAgent = sprintf "dotnet-ssllabs-check v%O" assmVer
+let private parseReq parseF resp =
     let body = resp.Body 
     let max = int resp.Headers.["X-Max-Assessments"];
     let curr = int resp.Headers.["X-Current-Assessments"] 
@@ -146,20 +136,18 @@ let parseReq parseF resp =
             Status = resp.StatusCode
         |}
     | _ -> failwith "Request did not return text";
-
 let request parseF api  = async {
         let! resp = Http.AsyncRequest(baseUrl + api, headers = [Hdr.UserAgent userAgent], silentHttpErrors = true)
         return parseReq parseF resp
     }
-
 let requestQ parseF api q = async{
         let! resp = Http.AsyncRequest(baseUrl + api, q, headers = [Hdr.UserAgent userAgent], silentHttpErrors = true)
         return parseReq parseF resp
     }
-
 let failWithHttpStatus status = failwithf "Service Returned HTTP Status %i" status
 
 //Check host list against SSLLabs.com
+type SslLabConfig = { OptOutputDir: string option; Emoji: bool}
 let sslLabs (config: SslLabConfig) (hosts:string seq) =
     //Configure if showing emoji
     let emoji s = if config.Emoji then s else String.Empty
@@ -221,91 +209,90 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                             do! Async.Sleep inProgPolling
                             yield! polledData [] 0 host
                 | None ->
-                    let random = Random()
                     match analyze.Status with
                     | HttpStatusCodes.TooManyRequests ->
                         yield! polledData startQ i host
                     | HttpStatusCodes.ServiceUnavailable  -> 
-                        let delay = random.Next(15_000, 30_000)
-                        TimeSpan.FromMilliseconds(float delay) 
+                        let delay = serviceUnavailablePolling ()
+                        delay 
                             |> consoleNN "Service Unavailable trying again for '%s' in %O." host
                             |> stdout
-                        do! Async.Sleep <| delay
+                        do! Async.Sleep <| delay.Milliseconds
                         yield! polledData startQ i host
                     | 529 (* overloaded *)  -> 
-                        let delay = random.Next(30_000, 45_000)
-                        TimeSpan.FromMilliseconds(float delay)
+                        let delay = serviceOverloadedPolling ()
+                        delay
                             |> consoleNN "Service Unavailable trying again for '%s' in %O." host
                             |> stdout 
-                        do! Async.Sleep <| delay
+                        do! Async.Sleep <| delay.Milliseconds
                         yield! polledData startQ i host
                     | x -> failWithHttpStatus x
         }
 
         //hostCheck 
         let hostCheck (fData: SslLabsHost.Root option) =  
-                           chooseSeq {
-                               let! data = fData
-                               //Process Certs to find leafs
-                               let certMap = 
-                                   data.Certs
-                                       |> Enumerable.toLookup (fun k->k.Subject)
-                                       |> Seq.map (fun l -> l.Key, l :> seq<_>)
-                                       |> Map.ofSeq
-                               let rootSubjects = data.Certs |> Seq.map (fun c->c.IssuerSubject)
-                               let leafCerts = certMap |> Seq.foldBack Map.remove rootSubjects
-                               //Check Expiration and errors of Leaf Certificates
-                               for cert in leafCerts |> Map.toSeq |> Seq.collect snd do
-                                   let startDate = DateTimeOffset.FromUnixTimeMilliseconds(cert.NotBefore)
-                                   let endDate = DateTimeOffset.FromUnixTimeMilliseconds(cert.NotAfter)
-                                   let issue:CertIssue = enum cert.Issues
-                                   //Ignore certs not for this domain
-                                   if not <| issue.HasFlag(CertIssue.HostnameMismatch) then
-                                       let cn = cert.CommonNames |> Seq.head
-                                       yield consoleN "  Certificate '%s' %s %i bit:" cn cert.KeyAlg cert.KeySize
-                                       let expireSpan = endDate - DateTimeOffset DateTime.UtcNow
-                                       let warningSpan = if endDate - startDate > TimeSpan.FromDays 90.0 then
-                                                             TimeSpan.FromDays 90.0
-                                                         else
-                                                             TimeSpan.FromDays 30.0
-                                       //Check for Issues
-                                       if issue <> CertIssue.Okay then
-                                           yield console "    Problem(s): "
-                                           yield consoleColorN ConsoleColor.DarkRed "%A" issue
-                                           yield AddStatus ErrorStatus.CertIssue
-                                       //Check Expiration of Cert
-                                       let status, color, label =
-                                           if expireSpan <=TimeSpan.FromDays 0.0 then
-                                               ErrorStatus.Expired, ConsoleColor.DarkRed, "Expired"
-                                           elif expireSpan <= warningSpan then
-                                               ErrorStatus.Expiring, ConsoleColor.DarkYellow, "Expires"
-                                           else
-                                               ErrorStatus.Okay, ConsoleColor.DarkGreen, "Expires"
+            chooseSeq {
+                let! data = fData
+                //Process Certs to find leafs
+                let certMap = 
+                    data.Certs
+                        |> Enumerable.toLookup (fun k->k.Subject)
+                        |> Seq.map (fun l -> l.Key, l :> seq<_>)
+                        |> Map.ofSeq
+                let rootSubjects = data.Certs |> Seq.map (fun c->c.IssuerSubject)
+                let leafCerts = certMap |> Seq.foldBack Map.remove rootSubjects
+                //Check Expiration and errors of Leaf Certificates
+                for cert in leafCerts |> Map.toSeq |> Seq.collect snd do
+                    let startDate = DateTimeOffset.FromUnixTimeMilliseconds(cert.NotBefore)
+                    let endDate = DateTimeOffset.FromUnixTimeMilliseconds(cert.NotAfter)
+                    let issue:CertIssue = enum cert.Issues
+                    //Ignore certs not for this domain
+                    if not <| issue.HasFlag(CertIssue.HostnameMismatch) then
+                        let cn = cert.CommonNames |> Seq.head
+                        yield consoleN "  Certificate '%s' %s %i bit:" cn cert.KeyAlg cert.KeySize
+                        let expireSpan = endDate - DateTimeOffset DateTime.UtcNow
+                        let warningSpan = if endDate - startDate > TimeSpan.FromDays 90.0 then
+                                                TimeSpan.FromDays 90.0
+                                            else
+                                                TimeSpan.FromDays 30.0
+                        //Check for Issues
+                        if issue <> CertIssue.Okay then
+                            yield console "    Problem(s): "
+                            yield consoleColorN ConsoleColor.DarkRed "%A" issue
+                            yield AddStatus ErrorStatus.CertIssue
+                        //Check Expiration of Cert
+                        let status, color, label =
+                            if expireSpan <=TimeSpan.FromDays 0.0 then
+                                ErrorStatus.Expired, ConsoleColor.DarkRed, "Expired"
+                            elif expireSpan <= warningSpan then
+                                ErrorStatus.Expiring, ConsoleColor.DarkYellow, "Expires"
+                            else
+                                ErrorStatus.Okay, ConsoleColor.DarkGreen, "Expires"
                                        
-                                       yield console "    %s: " label
-                                       let expiration = expireSpan.Days;
-                                       if expiration > 0 then
-                                           yield consoleColorN color "%i days from today" expiration
-                                       else
-                                           yield consoleColorN color "%i days ago" <| abs(expiration)
-                                       yield AddStatus status  
+                        yield console "    %s: " label
+                        let expiration = expireSpan.Days;
+                        if expiration > 0 then
+                            yield consoleColorN color "%i days from today" expiration
+                        else
+                            yield consoleColorN color "%i days ago" <| abs(expiration)
+                        yield AddStatus status  
 
-                               let (|Grade|_|) (g:string) (i:string) = if i.Contains(g) then Some () else None
-                               //Check grades (per endpont & host)
-                               for ep in data.Endpoints do
-                                   yield consoleN "  Endpoint '%s': " ep.IpAddress
-                                   let status, color = 
-                                       match (ep.Grade) with
-                                       | Grade "A" -> ErrorStatus.Okay, ConsoleColor.DarkGreen
-                                       | Grade "B" -> ErrorStatus.GradeB, ConsoleColor.DarkYellow
-                                       | _ -> ErrorStatus.NotGradeAOrB, ConsoleColor.DarkRed
-                                   yield console "    Grade: "
-                                   yield consoleColorN color "%s" ep.Grade
-                                   yield AddStatus status
+                let (|Grade|_|) (g:string) (i:string) = if i.Contains(g) then Some () else None
+                //Check grades (per endpont & host)
+                for ep in data.Endpoints do
+                    yield consoleN "  Endpoint '%s': " ep.IpAddress
+                    let status, color = 
+                        match (ep.Grade) with
+                        | Grade "A" -> ErrorStatus.Okay, ConsoleColor.DarkGreen
+                        | Grade "B" -> ErrorStatus.GradeB, ConsoleColor.DarkYellow
+                        | _ -> ErrorStatus.NotGradeAOrB, ConsoleColor.DarkRed
+                    yield console "    Grade: "
+                    yield consoleColorN color "%s" ep.Grade
+                    yield AddStatus status
 
-                           }
+            }
 
-        //processHost -- indexed for bulk offset
+        //processHost -- indexed for bulk offsetcon
         let processHost (i, host)  = asyncSeq {
             try 
                 let startTime = DateTime.UtcNow
