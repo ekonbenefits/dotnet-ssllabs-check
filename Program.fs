@@ -43,7 +43,7 @@ let main argv =
                        .Accepts(validator(fun x-> x.ExistingDirectory()))
 
     let optHostFile = app.Option<string>("--hostfile <PATH>", 
-                                    "File with one host per line to scan", 
+                                    "File with one host per line to check", 
                                     CommandOptionType.SingleValue)
                          .Accepts(validator(fun x-> x.ExistingFile()))
 
