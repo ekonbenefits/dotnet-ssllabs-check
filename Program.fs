@@ -34,24 +34,24 @@ let main argv =
                                          Description = "Unofficial SSL Labs Client")
     app.HelpOption() |> ignore;
     let optVersion = app.Option<bool>("-v|--version", 
-                                    "Show version and service info only", 
+                                    "Show version and service information", 
                                     CommandOptionType.NoValue)
 
     let optOutDir = app.Option<string>("-o|--output <DIRECTORY>", 
-                                       "Optional Output Directory for json data [Default: doesn't write out data]",
+                                       "Output directory for json data [Default: does not write out data]",
                                        CommandOptionType.SingleValue)
                        .Accepts(validator(fun x-> x.ExistingDirectory()))
 
     let optHostFile = app.Option<string>("--hostfile <PATH>", 
-                                    "File with one host per line to check", 
+                                    "Retreive list of hostnames from file to check (one host per line)", 
                                     CommandOptionType.SingleValue)
                          .Accepts(validator(fun x-> x.ExistingFile()))
 
     let optEmoji = app.Option<bool>("--emoji", 
-                                    "Use emoji's when outputing to console", 
+                                    "Show emoji when outputing to console", 
                                     CommandOptionType.NoValue)
     
-    let hosts = app.Argument<string>("host(s)", "Hosts to check SSL Grades and Validity", multipleValues=true)
+    let hosts = app.Argument<string>("hostname(s)", "Hostnames to check SSL Grades and Validity", multipleValues=true)
    
   
     app.OnValidate(
@@ -59,10 +59,10 @@ let main argv =
             if not <| optVersion.HasValue() 
                     && not <| hosts.Values.Any() 
                     && not <| optHostFile.HasValue() then
-                ValidationResult("At least one <host> argument or the --hostfile flag is required.")
+                ValidationResult("At least one <hostname> argument or the --hostfile flag is required.")
             elif hosts.Values.Any() 
                     && optHostFile.HasValue() then
-                ValidationResult("If using the --hostfile flag  don't include <host> arguments.")
+                ValidationResult("If using the --hostfile flag  don't include <hostname> arguments.")
             else
                 ValidationResult.Success
         ) |> ignore
