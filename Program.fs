@@ -43,7 +43,7 @@ let main argv =
                        .Accepts(validator(fun x-> x.ExistingDirectory()))
 
     let optHostFile = app.Option<string>("--hostfile <PATH>", 
-                                    "Retreive list of hostnames from file to check (one host per line)", 
+                                    "Retreive list of hostnames from file to check (one host per line, # preceding comments)", 
                                     CommandOptionType.SingleValue)
                          .Accepts(validator(fun x-> x.ExistingFile()))
 
