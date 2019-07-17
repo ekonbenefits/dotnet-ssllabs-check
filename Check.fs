@@ -242,10 +242,10 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
 
         let resultStream =
             asyncSeq {
-                let processHost host = asyncSeq {
+                let processHost host i = asyncSeq {
                     try 
                         let startTime = DateTime.UtcNow
-                        let! finalData = polledData ["startNew","on"] 1 host |> AsyncSeq.tryFirst
+                        let! finalData = polledData ["startNew","on"] i host |> AsyncSeq.tryFirst
                         //If output directory specified, write out json data.
                         do! writeJsonOutput (finalData |> toIJsonDocOption) host
                         //Check a single Host and bitwise OR error codes.
@@ -345,8 +345,16 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                         yield consoleN ""
                         yield AddStatus ErrorStatus.ExceptionThrown
                     }
-                for host in hosts do
-                    yield! processHost host
+                let toRun = asyncSeq {
+                    for i, host in Seq.indexed hosts do
+                        yield processHost host i
+                }
+                let result =
+                    toRun
+                    |> AsyncSeq.mapAsyncParallel (fun hostSeq -> hostSeq |> AsyncSeq.toListAsync )
+                    
+                yield! result |> AsyncSeq.collect AsyncSeq.ofSeq
+                
             }
         let! es = 
             resultStream 
