@@ -325,8 +325,9 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                 yield consoleColorN ConsoleColor.DarkBlue "    https://www.ssllabs.com/ssltest/analyze.html?d=%s" host
                 yield consoleN ""
             with ex -> 
-                yield consoleN "Unexpected Error (%s)" host
-                yield consoleN "  Result: %A" ErrorStatus.ExceptionThrown
+                yield consoleN "%s (Unexpected Error):" host
+                yield consoleN "  Has Error(s): %A" ErrorStatus.ExceptionThrown
+                yield consoleN "--------------"
                 let rec printExn : exn -> ResultStream seq =
                     function
                              | null -> Seq.empty
@@ -342,6 +343,7 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                                     yield! printExn singleEx.InnerException
                                 }
                 yield! AsyncSeq.ofSeq <| printExn ex
+                yield consoleN "--------------"
                 yield consoleN ""
                 yield AddStatus ErrorStatus.ExceptionThrown
             }
