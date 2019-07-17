@@ -33,6 +33,7 @@ let main argv =
                                          FullName = "dotnet-ssllabs-check",
                                          Description = "Unofficial SSL Labs Client")
     app.HelpOption() |> ignore;
+
     let optVersion = app.Option<bool>("-v|--version", 
                                     "Show version and service information", 
                                     CommandOptionType.NoValue)
@@ -51,8 +52,7 @@ let main argv =
                                     "Show emoji when outputing to console", 
                                     CommandOptionType.NoValue)
     
-    let hosts = app.Argument<string>("hostname(s)", "Hostnames to check SSL Grades and Validity", multipleValues=true)
-   
+    let hosts = app.Argument<string>("hostname(s)", "Hostnames to check SSL Grades and Validity", multipleValues=true)   
   
     app.OnValidate(
         fun _ -> 
