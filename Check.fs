@@ -301,6 +301,7 @@ let sslLabs (config: SslLabConfig) =
                             yield! pollUntilData startQ i host
                         | HttpStatusCodes.ServiceUnavailable  -> 
                             let delay = serviceUnavailablePolling ()
+                            //Write out Immediately
                             delay 
                                 |> consoleNN "Service Unavailable trying again for '%s' in %O." host
                                 |> stdout
@@ -308,6 +309,7 @@ let sslLabs (config: SslLabConfig) =
                             yield! pollUntilData startQ i host
                         | 529 (* overloaded *)  -> 
                             let delay = serviceOverloadedPolling ()
+                            //Write out Immediately
                             delay
                                 |> consoleNN "Service Overloaded trying again for '%s' in %O." host
                                 |> stdout 
