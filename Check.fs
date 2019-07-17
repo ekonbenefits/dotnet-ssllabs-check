@@ -113,17 +113,17 @@ type SslLabConfig = { OptOutputDir: string option; Emoji: bool}
 let assmVer = System.Reflection.Assembly.GetEntryAssembly().GetName().Version
 let userAgent = sprintf "dotnet-ssllabs-check v%O" assmVer
 
-let mutable assessmentTrack = (0,0)
+let assessmentTrack = ref (0,0)
 
 let updateAssessmentReq curr max =
-    ()
-    assessmentTrack <- curr,max
-    //assessmentTrack.AddOrUpdate("max", max, fun _ _ -> max) |> ignore
-    //assessmentTrack.AddOrUpdate("curr", curr, fun _ _ -> curr) |> ignore
+    lock assessmentTrack (fun () -> assessmentTrack := curr,max)
 
 let checkAllowedNewAssessment () =
-    let curr,max = assessmentTrack
-    curr < max
+    lock assessmentTrack (fun () ->
+            let curr,max = !assessmentTrack
+            curr < max
+        )
+    
 
 
 let parseReq parseF resp =
