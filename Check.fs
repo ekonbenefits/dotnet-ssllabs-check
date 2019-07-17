@@ -65,17 +65,17 @@ let toIJsonDocOption target : IJsonDocument option =
 // https://github.com/ssllabs/ssllabs-scan/blob/master/ssllabs-api-docs-v3.md#access-rate-and-rate-limiting
 let baseUrl = "https://api.ssllabs.com/api/v3"
 let appUrl = "https://www.ssllabs.com/ssltest/analyze.html"
-let prePolling = 5_000
-let inProgPolling = 10_000
+let prePolling = TimeSpan.FromSeconds(5.0)
+let inProgPolling = TimeSpan.FromSeconds(10.0)
 let private random = Random()
 let serviceUnavailablePolling () =
-    random.Next(15_000, 30_000)
+    random.Next(15, 30)
     |> float
-    |> TimeSpan.FromMilliseconds
+    |> TimeSpan.FromMinutes
 let serviceOverloadedPolling () =
-    random.Next(30_000, 45_000)
+    random.Next(30, 45)
     |> float
-    |> TimeSpan.FromMilliseconds
+    |> TimeSpan.FromMinutes
 
 //Setup Console initial state and functions
 let originalColor = Console.ForegroundColor
@@ -287,10 +287,10 @@ let sslLabs (config: SslLabConfig) =
                             | Ready ->
                                 yield data
                             | Dns -> 
-                                do! Async.Sleep prePolling
+                                do! Async.Sleep prePolling.Milliseconds
                                 yield! pollUntilData [] 0 host
                             | InProgress ->
-                                do! Async.Sleep inProgPolling
+                                do! Async.Sleep inProgPolling.Milliseconds
                                 yield! pollUntilData [] 0 host
                     | None ->
                         match analyze.Status with
@@ -301,14 +301,14 @@ let sslLabs (config: SslLabConfig) =
                             delay 
                                 |> consoleNN "Service Unavailable trying again for '%s' in %O." host
                                 |> stdout
-                            do! Async.Sleep <| delay.Milliseconds
+                            do! Async.Sleep delay.Milliseconds
                             yield! pollUntilData startQ i host
                         | 529 (* overloaded *)  -> 
                             let delay = serviceOverloadedPolling ()
                             delay
-                                |> consoleNN "Service Unavailable trying again for '%s' in %O." host
+                                |> consoleNN "Service Overloaded trying again for '%s' in %O." host
                                 |> stdout 
-                            do! Async.Sleep <| delay.Milliseconds
+                            do! Async.Sleep delay.Milliseconds
                             yield! pollUntilData startQ i host
                         | x -> failWithHttpStatus x
             }
