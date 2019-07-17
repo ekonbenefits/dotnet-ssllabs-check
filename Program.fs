@@ -24,7 +24,8 @@ let OptionToOption (opt:CommandOption<'T>) =
     else
         None
 
-
+let validator (f:Validation.IOptionValidationBuilder<_>->'b) : Validation.IOptionValidationBuilder<_> -> unit =
+    fun x -> f x |> ignore
 
 [<EntryPoint>]
 let main argv =
@@ -39,6 +40,12 @@ let main argv =
     let optOutDir = app.Option<string>("-o|--output <DIRECTORY>", 
                                        "Optional Output Directory for json data [Default: doesn't write out data]",
                                        CommandOptionType.SingleValue)
+                       .Accepts(validator(fun x-> x.ExistingDirectory()))
+
+    let optHostFile = app.Option<string>("--hostfile <PATH>", 
+                                    "File with one host per line to scan", 
+                                    CommandOptionType.SingleValue)
+                         .Accepts(validator(fun x-> x.ExistingFile()))
 
     let optEmoji = app.Option<bool>("--emoji", 
                                     "Use emoji's when outputing to console", 
@@ -47,24 +54,29 @@ let main argv =
     let hosts = app.Argument<string>("host(s)", "Hosts to check SSL Grades and Validity", multipleValues=true)
    
   
-    app.OnValidate(Func<ValidationContext, ValidationResult>(
-                         fun c -> 
-                            if not <| optVersion.HasValue() && not <| hosts.Values.Any() then
-                                ValidationResult("At least one <host> argument is required.")
-                            else
-                                ValidationResult.Success
-                            
-                    )) |> ignore
+    app.OnValidate(
+        fun _ -> 
+            if not <| optVersion.HasValue() 
+                    && not <| hosts.Values.Any() 
+                    && not <| optHostFile.HasValue() then
+                ValidationResult("At least one <host> argument or the --hostfile flag is required.")
+            elif hosts.Values.Any() 
+                    && optHostFile.HasValue() then
+                ValidationResult("If using the --hostfile flag  don't include <host> arguments.")
+            else
+                ValidationResult.Success
+        ) |> ignore
 
-    app.OnExecute(Func<int>(
-                    fun ()->
-                       hosts.Values
-                       |> Check.sslLabs {
-                                OptOutputDir = (optOutDir |> OptionToOption)
-                                Emoji = optEmoji.HasValue()
-                                VersionOnly = optVersion.HasValue()
-                            }
-                       |> Async.RunSynchronously
-                    ))
+    app.OnExecute(
+        fun ()->
+            Check.sslLabs {
+                    OptOutputDir = optOutDir |> OptionToOption
+                    Emoji = optEmoji.HasValue()
+                    VersionOnly = optVersion.HasValue()
+                    Hosts = hosts.Values
+                    HostFile = optHostFile |> OptionToOption
+                }
+            |> Async.RunSynchronously
+        )
 
     app.Execute(argv)

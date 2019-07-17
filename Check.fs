@@ -203,8 +203,8 @@ let hostJsonProcessor (fData: SslLabsHost.Root option) =
             yield AddStatus status
     }
 //Check host list against SSLLabs.com
-type SslLabConfig = { OptOutputDir: string option; Emoji: bool; VersionOnly: bool}
-let sslLabs (config: SslLabConfig) (hosts:string seq) =
+type SslLabConfig = { OptOutputDir: string option; Emoji: bool; VersionOnly: bool; Hosts: string seq; HostFile:string option}
+let sslLabs (config: SslLabConfig) =
     //Configure if showing emoji
     let emoji s = if config.Emoji then s else String.Empty
     if config.Emoji then
@@ -235,6 +235,15 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                 stdout <| consoleNN "%s - Unofficial Client - service unavailable" userAgent
                 failWithHttpStatus info.Status
         updateAssessmentReq cur1st max1st
+
+        //get host from arguments or file
+        let! hosts = option {
+                        let! hostFile = config.HostFile
+                        return async {
+                            let! contents = File.ReadAllLinesAsync hostFile |> Async.AwaitTask
+                            return contents |> Array.toSeq
+                        }
+                     } |?-> lazy (async { return config.Hosts })
 
         if config.VersionOnly then
             stdout <| consoleNN "Assessments Available %i of %i" cur1st max1st
@@ -311,7 +320,7 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                         yield consoleN "  Has Error(s): %A" hostEs
                     //SSL Labs link
                     yield consoleN "  Details:"
-                    yield consoleColorNN ConsoleColor.DarkBlue "    https://www.ssllabs.com/ssltest/analyze.html?d=%s" host
+                    yield consoleColorNN ConsoleColor.Blue "    https://www.ssllabs.com/ssltest/analyze.html?d=%s" host
                 with ex -> 
                     yield consoleN "%s (Unexpected Error):" host
                     yield consoleN "  Has Error(s): %A" ErrorStatus.ExceptionThrown
