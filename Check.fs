@@ -157,41 +157,45 @@ let hostJsonProcessor (data: SslLabsHost.Root option) =
         let rootSubjects = data'.Certs |> Seq.map (fun c->c.IssuerSubject)
         let leafCerts = certMap |> Seq.foldBack Map.remove rootSubjects
         //Check Expiration and errors of Leaf Certificates
-        let leafCerts' = leafCerts |> Map.toSeq |> Seq.collect snd |> Seq.indexed 
+        let leafCerts' = 
+            leafCerts 
+            |> Map.toSeq 
+            |> Seq.collect snd 
+            |> Seq.filter (fun c -> not <| (enum<CertIssue> c.Issues).HasFlag(CertIssue.HostnameMismatch))
+            |> Seq.indexed 
         for i,cert in leafCerts' do
             let startDate = DateTimeOffset.FromUnixTimeMilliseconds(cert.NotBefore)
             let endDate = DateTimeOffset.FromUnixTimeMilliseconds(cert.NotAfter)
             let issue:CertIssue = enum cert.Issues
             //Ignore certs not for this domain
-            if not <| issue.HasFlag(CertIssue.HostnameMismatch) then
-                yield consoleN "  Certificate #%i %s %i bit:" (i+1) cert.KeyAlg cert.KeySize
-                yield consoleN "    CN: %s" (cert.CommonNames |> String.join ", ")
-                let expireSpan = endDate - DateTimeOffset DateTime.UtcNow
-                let warningSpan = if endDate - startDate > TimeSpan.FromDays 90.0 then
-                                        TimeSpan.FromDays 90.0
-                                    else
-                                        TimeSpan.FromDays 30.0
-                //Check for Issues
-                if issue <> CertIssue.Okay then
-                    yield console "    Problem(s): "
-                    yield consoleColorN ConsoleColor.DarkRed "%A" issue
-                    yield AddStatus ErrorStatus.CertIssue
-                //Check Expiration of Cert
-                let status, color, label =
-                    if expireSpan <=TimeSpan.FromDays 0.0 then
-                        ErrorStatus.Expired, ConsoleColor.DarkRed, "Expired"
-                    elif expireSpan <= warningSpan then
-                        ErrorStatus.Expiring, ConsoleColor.DarkYellow, "Expires"
-                    else
-                        ErrorStatus.Okay, ConsoleColor.DarkGreen, "Expires"
-                               
-                yield console "    %s: " label
-                let expiration = expireSpan.Days;
-                if expiration > 0 then
-                    yield consoleColorN color "%i days from today" expiration
+            yield consoleN "  Certificate #%i %s %i bit:" (i+1) cert.KeyAlg cert.KeySize
+            yield consoleN "    SAN: %s" (cert.AltNames |> String.join ", ")
+            let expireSpan = endDate - DateTimeOffset DateTime.UtcNow
+            let warningSpan = if endDate - startDate > TimeSpan.FromDays 90.0 then
+                                    TimeSpan.FromDays 90.0
+                                else
+                                    TimeSpan.FromDays 30.0
+            //Check for Issues
+            if issue <> CertIssue.Okay then
+                yield console "    Problem(s): "
+                yield consoleColorN ConsoleColor.DarkRed "%A" issue
+                yield AddStatus ErrorStatus.CertIssue
+            //Check Expiration of Cert
+            let status, color, label =
+                if expireSpan <=TimeSpan.FromDays 0.0 then
+                    ErrorStatus.Expired, ConsoleColor.DarkRed, "Expired"
+                elif expireSpan <= warningSpan then
+                    ErrorStatus.Expiring, ConsoleColor.DarkYellow, "Expires"
                 else
-                    yield consoleColorN color "%i days ago" <| abs(expiration)
-                yield AddStatus status  
+                    ErrorStatus.Okay, ConsoleColor.DarkGreen, "Expires"
+                               
+            yield console "    %s: " label
+            let expiration = expireSpan.Days;
+            if expiration > 0 then
+                yield consoleColorN color "%i days from today" expiration
+            else
+                yield consoleColorN color "%i days ago" <| abs(expiration)
+            yield AddStatus status  
         let (|Grade|_|) (g:string) (i:string) = if i.Contains(g) then Some () else None
         //Check grades (per endpont & host)
         for ep in data'.Endpoints do
