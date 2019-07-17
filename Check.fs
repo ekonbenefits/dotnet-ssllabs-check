@@ -121,10 +121,11 @@ let updateAssessmentReq curr max =
 let checkAllowedNewAssessment () =
     lock assessmentTrack (fun () ->
             let curr,max = !assessmentTrack
-            curr < max
+            if max <= 0 then
+                failwithf "Service is not allowing you to request new assessments (%i, %i). " curr max
+            else
+                curr < max
         )
-    
-
 
 let parseReq parseF resp =
     let body = resp.Body 
@@ -181,8 +182,6 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                     stdout <| consoleN ""
                 stdout <| consoleN "Started: %O" DateTime.Now
                 stdout <| consoleN ""
-                if i.MaxAssessments <= 0 then
-                    stdout <| consoleN "Service is not allowing you to request new assessments."
                 i.NewAssessmentCoolOff,i.CurrentAssessments,i.MaxAssessments
             | None -> 
                 stdout <| consoleN "%s - Unofficial Client - service unavailable" userAgent
@@ -200,7 +199,7 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
         let rec polledData startQ i host= asyncSeq {
             do! Async.Sleep <| newCoolOff * i
             if not <| checkAllowedNewAssessment () then
-                yield! polledData startQ i host
+                yield! polledData startQ (i) host
             else
                 let! analyze = requestQ SslLabsHost.Parse "/analyze" <| ["host", host; "all", "done"] @ startQ
                 match analyze.Data with
@@ -240,125 +239,121 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                     | x -> failWithHttpStatus x
         }
 
-        let resultStream =
-            asyncSeq {
-                let processHost host i = asyncSeq {
-                    try 
-                        let startTime = DateTime.UtcNow
-                        let! finalData = polledData ["startNew","on"] i host |> AsyncSeq.tryFirst
-                        //If output directory specified, write out json data.
-                        do! writeJsonOutput (finalData |> toIJsonDocOption) host
-                        //Check a single Host and bitwise OR error codes.
-                        let hostCheck (fData: SslLabsHost.Root option) =  
-                            chooseSeq {
-                                let! data = fData
-                                //Process Certs to find leafs
-                                let certMap = 
-                                    data.Certs
-                                        |> Enumerable.toLookup (fun k->k.Subject)
-                                        |> Seq.map (fun l -> l.Key, l :> seq<_>)
-                                        |> Map.ofSeq
-                                let rootSubjects = data.Certs |> Seq.map (fun c->c.IssuerSubject)
-                                let leafCerts = certMap |> Seq.foldBack Map.remove rootSubjects
-                                //Check Expiration and errors of Leaf Certificates
-                                for cert in leafCerts |> Map.toSeq |> Seq.collect snd do
-                                    let startDate = DateTimeOffset.FromUnixTimeMilliseconds(cert.NotBefore)
-                                    let endDate = DateTimeOffset.FromUnixTimeMilliseconds(cert.NotAfter)
-                                    let issue:CertIssue = enum cert.Issues
-                                    //Ignore certs not for this domain
-                                    if not <| issue.HasFlag(CertIssue.HostnameMismatch) then
-                                        let cn = cert.CommonNames |> Seq.head
-                                        yield consoleN "  Certificate '%s' %s %i bit:" cn cert.KeyAlg cert.KeySize
-                                        let expireSpan = endDate - DateTimeOffset DateTime.UtcNow
-                                        let warningSpan = if endDate - startDate > TimeSpan.FromDays 90.0 then
-                                                              TimeSpan.FromDays 90.0
-                                                          else
-                                                              TimeSpan.FromDays 30.0
-                                        //Check for Issues
-                                        if issue <> CertIssue.Okay then
-                                            yield console "    Problem(s): "
-                                            yield consoleColorN ConsoleColor.DarkRed "%A" issue
-                                            yield AddStatus ErrorStatus.CertIssue
-                                        //Check Expiration of Cert
-                                        let status, color, label =
-                                            if expireSpan <=TimeSpan.FromDays 0.0 then
-                                                ErrorStatus.Expired, ConsoleColor.DarkRed, "Expired"
-                                            elif expireSpan <= warningSpan then
-                                                ErrorStatus.Expiring, ConsoleColor.DarkYellow, "Expires"
-                                            else
-                                                ErrorStatus.Okay, ConsoleColor.DarkGreen, "Expires"
-                                        
-                                        yield console "    %s: " label
-                                        let expiration = expireSpan.Days;
-                                        if expiration > 0 then
-                                            yield consoleColorN color "%i days from today" expiration
-                                        else
-                                            yield consoleColorN color "%i days ago" <| abs(expiration)
-                                        yield AddStatus status  
+        //hostCheck 
+        let hostCheck (fData: SslLabsHost.Root option) =  
+                           chooseSeq {
+                               let! data = fData
+                               //Process Certs to find leafs
+                               let certMap = 
+                                   data.Certs
+                                       |> Enumerable.toLookup (fun k->k.Subject)
+                                       |> Seq.map (fun l -> l.Key, l :> seq<_>)
+                                       |> Map.ofSeq
+                               let rootSubjects = data.Certs |> Seq.map (fun c->c.IssuerSubject)
+                               let leafCerts = certMap |> Seq.foldBack Map.remove rootSubjects
+                               //Check Expiration and errors of Leaf Certificates
+                               for cert in leafCerts |> Map.toSeq |> Seq.collect snd do
+                                   let startDate = DateTimeOffset.FromUnixTimeMilliseconds(cert.NotBefore)
+                                   let endDate = DateTimeOffset.FromUnixTimeMilliseconds(cert.NotAfter)
+                                   let issue:CertIssue = enum cert.Issues
+                                   //Ignore certs not for this domain
+                                   if not <| issue.HasFlag(CertIssue.HostnameMismatch) then
+                                       let cn = cert.CommonNames |> Seq.head
+                                       yield consoleN "  Certificate '%s' %s %i bit:" cn cert.KeyAlg cert.KeySize
+                                       let expireSpan = endDate - DateTimeOffset DateTime.UtcNow
+                                       let warningSpan = if endDate - startDate > TimeSpan.FromDays 90.0 then
+                                                             TimeSpan.FromDays 90.0
+                                                         else
+                                                             TimeSpan.FromDays 30.0
+                                       //Check for Issues
+                                       if issue <> CertIssue.Okay then
+                                           yield console "    Problem(s): "
+                                           yield consoleColorN ConsoleColor.DarkRed "%A" issue
+                                           yield AddStatus ErrorStatus.CertIssue
+                                       //Check Expiration of Cert
+                                       let status, color, label =
+                                           if expireSpan <=TimeSpan.FromDays 0.0 then
+                                               ErrorStatus.Expired, ConsoleColor.DarkRed, "Expired"
+                                           elif expireSpan <= warningSpan then
+                                               ErrorStatus.Expiring, ConsoleColor.DarkYellow, "Expires"
+                                           else
+                                               ErrorStatus.Okay, ConsoleColor.DarkGreen, "Expires"
+                                       
+                                       yield console "    %s: " label
+                                       let expiration = expireSpan.Days;
+                                       if expiration > 0 then
+                                           yield consoleColorN color "%i days from today" expiration
+                                       else
+                                           yield consoleColorN color "%i days ago" <| abs(expiration)
+                                       yield AddStatus status  
 
-                                let (|Grade|_|) (g:string) (i:string) = if i.Contains(g) then Some () else None
-                                //Check grades (per endpont & host)
-                                for ep in data.Endpoints do
-                                    yield consoleN "  Endpoint '%s': " ep.IpAddress
-                                    let status, color = 
-                                        match (ep.Grade) with
-                                        | Grade "A" -> ErrorStatus.Okay, ConsoleColor.DarkGreen
-                                        | Grade "B" -> ErrorStatus.GradeB, ConsoleColor.DarkYellow
-                                        | _ -> ErrorStatus.NotGradeAOrB, ConsoleColor.DarkRed
-                                    yield console "    Grade: "
-                                    yield consoleColorN color "%s" ep.Grade
-                                    yield AddStatus status
+                               let (|Grade|_|) (g:string) (i:string) = if i.Contains(g) then Some () else None
+                               //Check grades (per endpont & host)
+                               for ep in data.Endpoints do
+                                   yield consoleN "  Endpoint '%s': " ep.IpAddress
+                                   let status, color = 
+                                       match (ep.Grade) with
+                                       | Grade "A" -> ErrorStatus.Okay, ConsoleColor.DarkGreen
+                                       | Grade "B" -> ErrorStatus.GradeB, ConsoleColor.DarkYellow
+                                       | _ -> ErrorStatus.NotGradeAOrB, ConsoleColor.DarkRed
+                                   yield console "    Grade: "
+                                   yield consoleColorN color "%s" ep.Grade
+                                   yield AddStatus status
 
-                            }
-                        let hostResults = finalData |> hostCheck
-                        yield consoleN "%s (%O): " host (DateTime.UtcNow - startTime)
-                        yield! AsyncSeq.ofSeq hostResults
-                        let hostEs = 
-                            hostResults
-                            |> Seq.choose (function|AddStatus e-> Some e|_->None)
-                            |> Seq.fold (|||) ErrorStatus.Okay
-                        //Error Summary
-                        if hostEs <> ErrorStatus.Okay then
-                            yield consoleN "  Has Error(s): %A" hostEs
-                        //SSL Labs link
-                        yield consoleN "  Details:"
-                        yield consoleColorN ConsoleColor.DarkBlue "    https://www.ssllabs.com/ssltest/analyze.html?d=%s" host
-                        yield consoleN ""
-                    with ex -> 
-                        yield consoleN "Unexpected Error (%s)" host
-                        yield consoleN "  Result: %A" ErrorStatus.ExceptionThrown
-                        let rec printExn : exn -> ResultStream seq =
-                            function
-                                     | null -> Seq.empty
-                                     | :? AggregateException as multiEx -> 
-                                            seq {
-                                                for ie in multiEx.Flatten().InnerExceptions do
-                                                    yield! printExn ie
-                                            }
-                                     | singleEx -> 
-                                        seq {
-                                            yield consoleN "%s" singleEx.Message
-                                            yield consoleN "%s" singleEx.StackTrace
-                                            yield! printExn singleEx.InnerException
-                                        }
-                        yield! AsyncSeq.ofSeq <| printExn ex
-                        yield consoleN ""
-                        yield AddStatus ErrorStatus.ExceptionThrown
-                    }
-                let toRun = asyncSeq {
-                    for i, host in Seq.indexed hosts do
-                        yield processHost host i
-                }
-                let result =
-                    toRun
-                    |> AsyncSeq.mapAsyncParallel (fun hostSeq -> hostSeq |> AsyncSeq.toListAsync )
-                    
-                yield! result |> AsyncSeq.collect AsyncSeq.ofSeq
-                
+                           }
+
+        //processHost -- indexed for bulk offset
+        let processHost (i, host)  = asyncSeq {
+            try 
+                let startTime = DateTime.UtcNow
+                let! finalData = polledData ["startNew","on"] i host |> AsyncSeq.tryFirst
+                //If output directory specified, write out json data.
+                do! writeJsonOutput (finalData |> toIJsonDocOption) host
+                //Check a single Host and bitwise OR error codes.
+                let hostResults = finalData |> hostCheck
+                yield consoleN "%s (%O): " host (DateTime.UtcNow - startTime)
+                yield! AsyncSeq.ofSeq hostResults
+                let hostEs = 
+                    hostResults
+                    |> Seq.choose (function|AddStatus e-> Some e|_->None)
+                    |> Seq.fold (|||) ErrorStatus.Okay
+                //Error Summary
+                if hostEs <> ErrorStatus.Okay then
+                    yield consoleN "  Has Error(s): %A" hostEs
+                //SSL Labs link
+                yield consoleN "  Details:"
+                yield consoleColorN ConsoleColor.DarkBlue "    https://www.ssllabs.com/ssltest/analyze.html?d=%s" host
+                yield consoleN ""
+            with ex -> 
+                yield consoleN "Unexpected Error (%s)" host
+                yield consoleN "  Result: %A" ErrorStatus.ExceptionThrown
+                let rec printExn : exn -> ResultStream seq =
+                    function
+                             | null -> Seq.empty
+                             | :? AggregateException as multiEx -> 
+                                    seq {
+                                        for ie in multiEx.Flatten().InnerExceptions do
+                                            yield! printExn ie
+                                    }
+                             | singleEx -> 
+                                seq {
+                                    yield consoleN "%s" singleEx.Message
+                                    yield consoleN "%s" singleEx.StackTrace
+                                    yield! printExn singleEx.InnerException
+                                }
+                yield! AsyncSeq.ofSeq <| printExn ex
+                yield consoleN ""
+                yield AddStatus ErrorStatus.ExceptionThrown
             }
+
         let! es = 
-            resultStream 
-            |> AsyncSeq.map stdoutOrStatus 
+            hosts
+            |> Seq.indexed
+            |> AsyncSeq.ofSeq
+            |> AsyncSeq.map processHost
+            |> AsyncSeq.mapAsyncParallel AsyncSeq.toListAsync 
+            |> AsyncSeq.collect AsyncSeq.ofSeq
+            |> AsyncSeq.map stdoutOrStatus //Write out to console
             |> AsyncSeq.fold (|||) ErrorStatus.Okay
 
         stdout <| consoleN "Completed: %O" DateTime.Now
