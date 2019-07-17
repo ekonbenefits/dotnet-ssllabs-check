@@ -29,6 +29,11 @@ module Hdr = FSharp.Data.HttpRequestHeaders
 type SslLabsHost = JsonProvider<"samples/host.json">
 type SslLabsInfo = JsonProvider<"samples/info.json">
 
+type IJsonDocument = FSharp.Data.Runtime.BaseTypes.IJsonDocument
+
+let toIJsonDocOption target : IJsonDocument option =
+    target |> Option.map (fun x-> upcast x)
+
 let baseUrl = "https://api.ssllabs.com/api/v3"
 
 [<Flags>]
@@ -136,6 +141,16 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
     let emoji s = if config.Emoji then s else String.Empty
     if config.Emoji then
         Console.OutputEncoding <- System.Text.Encoding.UTF8
+
+    let writeJsonOutput (fData:IJsonDocument option) identifier =
+        option {
+                let! data = fData
+                let! outDir = config.OptOutputDir
+                Directory.CreateDirectory outDir |> ignore
+                let outPath = Path.Combine(outDir, sprintf "%s.json" identifier)
+                return File.WriteAllTextAsync(outPath, data.JsonValue.ToString()) |> Async.AwaitTask
+        } |?-> asyncNoOp
+
     //Main Logic
     async {
         //Print out SSL Labs Info
@@ -157,6 +172,9 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                 consoleN "%s - Unofficial Client - service unavailable" userAgent
                 failWithHttpStatus info.Status
         updateAssessmentReq cur1st max1st
+
+        //If output directory specified, write out json data.
+        do! writeJsonOutput (info.Data |> toIJsonDocOption) "info"
 
         //Function for polling data for a sigle host
         let rec polledData startQ i host= asyncSeq {
@@ -211,19 +229,14 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                         Console.SetCursorPosition(oldPos)
                         let! finalData = polledData ["startNew","on"] 1 host |> AsyncSeq.tryFirst
                         consoleN "%s (%O): " host (DateTime.UtcNow - startTime)
+
                         //If output directory specified, write out json data.
-                        do!
-                            option {
-                                        let! data = finalData
-                                        let! outDir = config.OptOutputDir
-                                        Directory.CreateDirectory outDir |> ignore
-                                        let outPath = Path.Combine(outDir, sprintf "%s.json" host)
-                                        return File.WriteAllTextAsync(outPath, data.JsonValue.ToString()) |> Async.AwaitTask
-                            } |?-> asyncNoOp
+                        do! writeJsonOutput (finalData |> toIJsonDocOption) host
+                            
                         //Check a single Host and bitwise OR error codes.
-                        let hostEs =  
+                        let hostCheck (fData: SslLabsHost.Root option) =  
                             chooseSeq {
-                                let! data = finalData
+                                let! data = fData
                                 //Process Certs to find leafs
                                 let certMap = 
                                     data.Certs
@@ -281,7 +294,9 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                                     consoleColorN color "%s" ep.Grade
                                     yield status
 
-                            } |> Seq.fold (|||) ErrorStatus.Okay
+                            }
+
+                        let hostEs = finalData |> hostCheck  |> Seq.fold (|||) ErrorStatus.Okay
                         //Error Summary
                         if hostEs <> ErrorStatus.Okay then
                             consoleN "  Has Error(s): %A" hostEs
