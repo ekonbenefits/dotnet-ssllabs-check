@@ -60,6 +60,9 @@ let parseSslLabsError =
              | _ -> Error
 let toIJsonDocOption target : IJsonDocument option =
     target |> Option.map (fun x-> upcast x)
+module Async =
+    let sleepTimeSpan (time:TimeSpan) =
+        Async.Sleep (int time.TotalMilliseconds)
 
 //Constants suggestion from the api docs
 // https://github.com/ssllabs/ssllabs-scan/blob/master/ssllabs-api-docs-v3.md#access-rate-and-rate-limiting
@@ -287,10 +290,10 @@ let sslLabs (config: SslLabConfig) =
                             | Ready ->
                                 yield data
                             | Dns -> 
-                                do! Async.Sleep prePolling.Milliseconds
+                                do! Async.sleepTimeSpan prePolling
                                 yield! pollUntilData [] 0 host
                             | InProgress ->
-                                do! Async.Sleep inProgPolling.Milliseconds
+                                do! Async.sleepTimeSpan inProgPolling
                                 yield! pollUntilData [] 0 host
                     | None ->
                         match analyze.Status with
@@ -301,14 +304,14 @@ let sslLabs (config: SslLabConfig) =
                             delay 
                                 |> consoleNN "Service Unavailable trying again for '%s' in %O." host
                                 |> stdout
-                            do! Async.Sleep delay.Milliseconds
+                            do! Async.sleepTimeSpan delay
                             yield! pollUntilData startQ i host
                         | 529 (* overloaded *)  -> 
                             let delay = serviceOverloadedPolling ()
                             delay
                                 |> consoleNN "Service Overloaded trying again for '%s' in %O." host
                                 |> stdout 
-                            do! Async.Sleep delay.Milliseconds
+                            do! Async.sleepTimeSpan delay
                             yield! pollUntilData startQ i host
                         | x -> failWithHttpStatus x
             }
