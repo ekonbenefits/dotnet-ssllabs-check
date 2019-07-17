@@ -319,7 +319,7 @@ let sslLabs (config: SslLabConfig) =
             //processHost -- indexed for bulk offset
             let parallelProcessHost (i, host)  = asyncSeq {
                 try 
-                    let startTime = DateTime.UtcNow
+                    
                     let! data = 
                         pollUntilData ["startNew","on"] (i + 1) host
                         |> AsyncSeq.tryFirst
@@ -327,7 +327,7 @@ let sslLabs (config: SslLabConfig) =
                     do! writeJsonOutput (data |> toIJsonDocOption) host
                     //Process host results
                     let hostResults = data |> hostJsonProcessor
-                    yield consoleN "%s (%O): " host (DateTime.UtcNow - startTime)
+                    yield consoleN "%s: " host
                     yield! AsyncSeq.ofSeq hostResults
                     let hostEs = 
                         hostResults
@@ -361,7 +361,7 @@ let sslLabs (config: SslLabConfig) =
                     yield consoleNN "--------------"
                     yield AddStatus ErrorStatus.ExceptionThrown
                 }
-
+            let startTime = DateTime.UtcNow
             let totalHosts = hosts |> Seq.length
             let! es = 
                 hosts
@@ -370,7 +370,7 @@ let sslLabs (config: SslLabConfig) =
                 |> AsyncSeq.map parallelProcessHost
                 |> AsyncSeq.mapAsyncParallelUnordered AsyncSeq.toListAsync
                 |> AsyncSeq.indexed
-                |> AsyncSeq.map (fun (i, tail) -> (consoleN "-- %d of %i --" (i+1L) totalHosts) :: tail )
+                |> AsyncSeq.map (fun (i, tail) -> (consoleN "-- %d of %i --- %O --" (i+1L) totalHosts (DateTime.UtcNow - startTime)) :: tail )
                 |> AsyncSeq.collect AsyncSeq.ofSeq
                 |> AsyncSeq.map stdoutOrStatus //Write out to console
                 |> AsyncSeq.fold (|||) ErrorStatus.Okay
