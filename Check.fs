@@ -242,7 +242,7 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
 
         let resultStream =
             asyncSeq {
-                for host in hosts do
+                let processHost host = asyncSeq {
                     try 
                         let startTime = DateTime.UtcNow
                         let! finalData = polledData ["startNew","on"] 1 host |> AsyncSeq.tryFirst
@@ -344,6 +344,9 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                         yield! AsyncSeq.ofSeq <| printExn ex
                         yield consoleN ""
                         yield AddStatus ErrorStatus.ExceptionThrown
+                    }
+                for host in hosts do
+                    yield! processHost host
             }
         let! es = 
             resultStream 
