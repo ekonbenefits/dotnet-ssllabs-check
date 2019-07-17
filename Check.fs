@@ -263,7 +263,7 @@ let sslLabs (config: SslLabConfig) =
             return int ErrorStatus.Okay
         else
             stdout <| consoleNN "Started: %O" DateTime.Now
-            stdout <| consoleN "Hosts to Check:"
+            stdout <| consoleN "Hostnames to Check:"
             for host in hosts do
                 stdout <| consoleN " %s" host
             stdout <| consoleN ""
@@ -359,12 +359,15 @@ let sslLabs (config: SslLabConfig) =
                     yield AddStatus ErrorStatus.ExceptionThrown
                 }
 
+            let totalHosts = hosts |> Seq.length
             let! es = 
                 hosts
                 |> Seq.indexed
                 |> AsyncSeq.ofSeq
                 |> AsyncSeq.map parallelProcessHost
-                |> AsyncSeq.mapAsyncParallelUnordered AsyncSeq.toListAsync 
+                |> AsyncSeq.mapAsyncParallelUnordered AsyncSeq.toListAsync
+                |> AsyncSeq.indexed
+                |> AsyncSeq.map (fun (i, tail) -> (consoleN "-- %d of %i --" (i+1L) totalHosts) :: tail )
                 |> AsyncSeq.collect AsyncSeq.ofSeq
                 |> AsyncSeq.map stdoutOrStatus //Write out to console
                 |> AsyncSeq.fold (|||) ErrorStatus.Okay

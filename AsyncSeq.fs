@@ -1,7 +1,8 @@
 ﻿// ----------------------------------------------------------------------------
 // F# async extensions (AsyncSeq.fs)
 // (c) Tomas Petricek, 2011, Available under Apache 2.0 license.
-// Modified mapAsyncParallel to mapAsyncParallelUnordered for unordered results by Jay Tuley 7/17/2019
+// Excerpt from https://github.com/fsprojects/FSharp.Control.AsyncSeq
+// * Modified mapAsyncParallel to mapAsyncParallelUnordered for unordered results by Jay Tuley 7/17/2019
 // ----------------------------------------------------------------------------
 
 module AsyncSeq
