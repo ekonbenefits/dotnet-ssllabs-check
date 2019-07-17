@@ -257,7 +257,7 @@ let sslLabs (config: SslLabConfig) =
                         let! hostFile = config.HostFile
                         return async {
                             let! contents = File.ReadAllLinesAsync hostFile |> Async.AwaitTask
-                            return contents |> Array.toSeq
+                            return contents |> Array.toSeq |> Seq.filter (not << String.startsWith "#")
                         }
                      } |?-> lazy (async { return config.Hosts })
 
