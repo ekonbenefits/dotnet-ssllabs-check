@@ -203,7 +203,7 @@ let hostJsonProcessor (fData: SslLabsHost.Root option) =
             yield AddStatus status
     }
 //Check host list against SSLLabs.com
-type SslLabConfig = { OptOutputDir: string option; Emoji: bool}
+type SslLabConfig = { OptOutputDir: string option; Emoji: bool; VersionOnly: bool}
 let sslLabs (config: SslLabConfig) (hosts:string seq) =
     //Configure if showing emoji
     let emoji s = if config.Emoji then s else String.Empty
@@ -230,124 +230,128 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                 stdout <| consoleNN "%s - Unofficial Client - (engine:%s) (criteria:%s)" userAgent i.EngineVersion i.CriteriaVersion
                 for m in i.Messages do
                     stdout <| consoleNN "%s" m
-                stdout <| consoleNN "Started: %O" DateTime.Now
                 i.NewAssessmentCoolOff,i.CurrentAssessments,i.MaxAssessments
             | None -> 
-                stdout <| consoleN "%s - Unofficial Client - service unavailable" userAgent
+                stdout <| consoleNN "%s - Unofficial Client - service unavailable" userAgent
                 failWithHttpStatus info.Status
         updateAssessmentReq cur1st max1st
-        
-        stdout <| consoleN "Hosts to Check:"
-        for host in hosts do
-            stdout <| consoleN " %s" host
-        stdout <| consoleN ""
-        //If output directory specified, write out json data.
-        do! writeJsonOutput (info.Data |> toIJsonDocOption) "info"
 
-        //polling data for a single host
-        let rec pollUntilData startQ i host= asyncSeq {
-            do! Async.Sleep <| newCoolOff * i
-            if not <| checkAllowedNewAssessment () then
-                yield! pollUntilData startQ (i + 1) host
-            else
-                let! analyze = requestQ SslLabsHost.Parse "/analyze" <| ["host", host; "all", "done"] @ startQ
-                match analyze.Data with
-                | Some data ->
-                    let status = parseSslLabsError data.Status
-                    match status with
-                        | Error -> 
-                              let statusMessage = data.JsonValue.Item("statusMessage").ToString()
-                              failwithf "Error Analyzing %s - %s" host statusMessage
-                        | Ready ->
-                            yield data
-                        | Dns -> 
-                            do! Async.Sleep prePolling
-                            yield! pollUntilData [] 0 host
-                        | InProgress ->
-                            do! Async.Sleep inProgPolling
-                            yield! pollUntilData [] 0 host
-                | None ->
-                    match analyze.Status with
-                    | HttpStatusCodes.TooManyRequests ->
-                        yield! pollUntilData startQ i host
-                    | HttpStatusCodes.ServiceUnavailable  -> 
-                        let delay = serviceUnavailablePolling ()
-                        delay 
-                            |> consoleNN "Service Unavailable trying again for '%s' in %O." host
-                            |> stdout
-                        do! Async.Sleep <| delay.Milliseconds
-                        yield! pollUntilData startQ i host
-                    | 529 (* overloaded *)  -> 
-                        let delay = serviceOverloadedPolling ()
-                        delay
-                            |> consoleNN "Service Unavailable trying again for '%s' in %O." host
-                            |> stdout 
-                        do! Async.Sleep <| delay.Milliseconds
-                        yield! pollUntilData startQ i host
-                    | x -> failWithHttpStatus x
-        }
+        if config.VersionOnly then
+            stdout <| consoleNN "Assessments Available %i of %i" cur1st max1st
+            return int ErrorStatus.Okay
+        else
+            stdout <| consoleNN "Started: %O" DateTime.Now
+            stdout <| consoleN "Hosts to Check:"
+            for host in hosts do
+                stdout <| consoleN " %s" host
+            stdout <| consoleN ""
+            //If output directory specified, write out json data.
+            do! writeJsonOutput (info.Data |> toIJsonDocOption) "info"
 
-        //processHost -- indexed for bulk offset
-        let parallelProcessHost (i, host)  = asyncSeq {
-            try 
-                let startTime = DateTime.UtcNow
-                let! data = pollUntilData ["startNew","on"] i host |> AsyncSeq.tryFirst
-                //If output directory specified, write out json data.
-                do! writeJsonOutput (data |> toIJsonDocOption) host
-                //Process host results
-                let hostResults = data |> hostJsonProcessor
-                yield consoleN "%s (%O): " host (DateTime.UtcNow - startTime)
-                yield! AsyncSeq.ofSeq hostResults
-                let hostEs = 
-                    hostResults
-                    |> Seq.choose (function|AddStatus e->Some e|_->None)
-                    |> Seq.fold (|||) ErrorStatus.Okay
-                //Error Summary
-                if hostEs <> ErrorStatus.Okay then
-                    yield consoleN "  Has Error(s): %A" hostEs
-                //SSL Labs link
-                yield consoleN "  Details:"
-                yield consoleColorNN ConsoleColor.DarkBlue "    https://www.ssllabs.com/ssltest/analyze.html?d=%s" host
-            with ex -> 
-                yield consoleN "%s (Unexpected Error):" host
-                yield consoleN "  Has Error(s): %A" ErrorStatus.ExceptionThrown
-                yield consoleN "--------------"
-                let rec printExn : exn -> ResultStream seq =
-                    function
-                             | null -> Seq.empty
-                             | :? AggregateException as multiEx -> 
-                                    seq {
-                                        for ie in multiEx.Flatten().InnerExceptions do
-                                            yield! printExn ie
-                                    }
-                             | singleEx -> 
-                                seq {
-                                    yield consoleN "%s" singleEx.Message
-                                    yield consoleN "%s" singleEx.StackTrace
-                                    yield! printExn singleEx.InnerException
-                                }
-                yield! AsyncSeq.ofSeq <| printExn ex
-                yield consoleNN "--------------"
-                yield AddStatus ErrorStatus.ExceptionThrown
+            //polling data for a single host
+            let rec pollUntilData startQ i host= asyncSeq {
+                do! Async.Sleep <| newCoolOff * i
+                if not <| checkAllowedNewAssessment () then
+                    yield! pollUntilData startQ (i + 1) host
+                else
+                    let! analyze = requestQ SslLabsHost.Parse "/analyze" <| ["host", host; "all", "done"] @ startQ
+                    match analyze.Data with
+                    | Some data ->
+                        let status = parseSslLabsError data.Status
+                        match status with
+                            | Error -> 
+                                  let statusMessage = data.JsonValue.Item("statusMessage").ToString()
+                                  failwithf "Error Analyzing %s - %s" host statusMessage
+                            | Ready ->
+                                yield data
+                            | Dns -> 
+                                do! Async.Sleep prePolling
+                                yield! pollUntilData [] 0 host
+                            | InProgress ->
+                                do! Async.Sleep inProgPolling
+                                yield! pollUntilData [] 0 host
+                    | None ->
+                        match analyze.Status with
+                        | HttpStatusCodes.TooManyRequests ->
+                            yield! pollUntilData startQ i host
+                        | HttpStatusCodes.ServiceUnavailable  -> 
+                            let delay = serviceUnavailablePolling ()
+                            delay 
+                                |> consoleNN "Service Unavailable trying again for '%s' in %O." host
+                                |> stdout
+                            do! Async.Sleep <| delay.Milliseconds
+                            yield! pollUntilData startQ i host
+                        | 529 (* overloaded *)  -> 
+                            let delay = serviceOverloadedPolling ()
+                            delay
+                                |> consoleNN "Service Unavailable trying again for '%s' in %O." host
+                                |> stdout 
+                            do! Async.Sleep <| delay.Milliseconds
+                            yield! pollUntilData startQ i host
+                        | x -> failWithHttpStatus x
             }
 
-        let! es = 
-            hosts
-            |> Seq.indexed
-            |> AsyncSeq.ofSeq
-            |> AsyncSeq.map parallelProcessHost
-            |> AsyncSeq.mapAsyncParallel AsyncSeq.toListAsync 
-            |> AsyncSeq.collect AsyncSeq.ofSeq
-            |> AsyncSeq.map stdoutOrStatus //Write out to console
-            |> AsyncSeq.fold (|||) ErrorStatus.Okay
+            //processHost -- indexed for bulk offset
+            let parallelProcessHost (i, host)  = asyncSeq {
+                try 
+                    let startTime = DateTime.UtcNow
+                    let! data = pollUntilData ["startNew","on"] i host |> AsyncSeq.tryFirst
+                    //If output directory specified, write out json data.
+                    do! writeJsonOutput (data |> toIJsonDocOption) host
+                    //Process host results
+                    let hostResults = data |> hostJsonProcessor
+                    yield consoleN "%s (%O): " host (DateTime.UtcNow - startTime)
+                    yield! AsyncSeq.ofSeq hostResults
+                    let hostEs = 
+                        hostResults
+                        |> Seq.choose (function|AddStatus e->Some e|_->None)
+                        |> Seq.fold (|||) ErrorStatus.Okay
+                    //Error Summary
+                    if hostEs <> ErrorStatus.Okay then
+                        yield consoleN "  Has Error(s): %A" hostEs
+                    //SSL Labs link
+                    yield consoleN "  Details:"
+                    yield consoleColorNN ConsoleColor.DarkBlue "    https://www.ssllabs.com/ssltest/analyze.html?d=%s" host
+                with ex -> 
+                    yield consoleN "%s (Unexpected Error):" host
+                    yield consoleN "  Has Error(s): %A" ErrorStatus.ExceptionThrown
+                    yield consoleN "--------------"
+                    let rec printExn : exn -> ResultStream seq =
+                        function
+                                 | null -> Seq.empty
+                                 | :? AggregateException as multiEx -> 
+                                        seq {
+                                            for ie in multiEx.Flatten().InnerExceptions do
+                                                yield! printExn ie
+                                        }
+                                 | singleEx -> 
+                                    seq {
+                                        yield consoleN "%s" singleEx.Message
+                                        yield consoleN "%s" singleEx.StackTrace
+                                        yield! printExn singleEx.InnerException
+                                    }
+                    yield! AsyncSeq.ofSeq <| printExn ex
+                    yield consoleNN "--------------"
+                    yield AddStatus ErrorStatus.ExceptionThrown
+                }
 
-        stdout <| consoleN "Completed: %O" DateTime.Now
-        //Final Error Summary
-        if es = ErrorStatus.Okay then
-            stdout <| consoleN "All Clear%s." (emoji " 😃")
-        else
-            let scream = emoji " 😱"
-            let frown = emoji " 😦"
-            stdout <| consoleN "Found Error(s)%s: %A" (if es <= ErrorStatus.GradeB then frown else scream) es
-        return int es
+            let! es = 
+                hosts
+                |> Seq.indexed
+                |> AsyncSeq.ofSeq
+                |> AsyncSeq.map parallelProcessHost
+                |> AsyncSeq.mapAsyncParallel AsyncSeq.toListAsync 
+                |> AsyncSeq.collect AsyncSeq.ofSeq
+                |> AsyncSeq.map stdoutOrStatus //Write out to console
+                |> AsyncSeq.fold (|||) ErrorStatus.Okay
+
+            stdout <| consoleN "Completed: %O" DateTime.Now
+            //Final Error Summary
+            if es = ErrorStatus.Okay then
+                stdout <| consoleN "All Clear%s." (emoji " 😃")
+            else
+                let scream = emoji " 😱"
+                let frown = emoji " 😦"
+                stdout <| consoleN "Found Error(s)%s: %A" (if es <= ErrorStatus.GradeB then frown else scream) es
+            return int es
     }

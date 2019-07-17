@@ -14,6 +14,8 @@
    limitations under the License.
 *)
 open System
+open System.ComponentModel.DataAnnotations
+open System.Linq
 open McMaster.Extensions.CommandLineUtils
 
 let OptionToOption (opt:CommandOption<'T>) =
@@ -26,23 +28,42 @@ let OptionToOption (opt:CommandOption<'T>) =
 
 [<EntryPoint>]
 let main argv =
-    use app = new CommandLineApplication();
+    use app = new CommandLineApplication(Name = "ssllabs-check", 
+                                         FullName = "dotnet-ssllabs-check",
+                                         Description = "Unofficial SSL Labs Client")
     app.HelpOption() |> ignore;
+    let optVersion = app.Option<bool>("-v|--version", 
+                                    "Show version and service info only", 
+                                    CommandOptionType.NoValue)
 
     let optOutDir = app.Option<string>("-o|--output <DIRECTORY>", 
-                                       "Output Directory for optional json data [Default: don't write out data]",
+                                       "Optional Output Directory for json data [Default: doesn't write out data]",
                                        CommandOptionType.SingleValue)
 
     let optEmoji = app.Option<bool>("--emoji", 
                                     "Use emoji's when outputing to console", 
                                     CommandOptionType.NoValue)
     
-    let hosts = app.Argument<string>("Hosts", "Hosts to check SSL Grades and Validity", multipleValues=true).IsRequired();
+    let hosts = app.Argument<string>("host(s)", "Hosts to check SSL Grades and Validity", multipleValues=true)
+   
+  
+    app.OnValidate(Func<ValidationContext, ValidationResult>(
+                         fun c -> 
+                            if not <| optVersion.HasValue() && not <| hosts.Values.Any() then
+                                ValidationResult("At least one <host> argument is required.")
+                            else
+                                ValidationResult.Success
+                            
+                    )) |> ignore
 
     app.OnExecute(Func<int>(
                     fun ()->
                        hosts.Values
-                       |> Check.sslLabs {OptOutputDir = (optOutDir |> OptionToOption) ; Emoji = optEmoji.HasValue()}
+                       |> Check.sslLabs {
+                                OptOutputDir = (optOutDir |> OptionToOption)
+                                Emoji = optEmoji.HasValue()
+                                VersionOnly = optVersion.HasValue()
+                            }
                        |> Async.RunSynchronously
                     ))
 
