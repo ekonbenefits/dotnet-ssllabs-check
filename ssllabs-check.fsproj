@@ -27,6 +27,7 @@
   <ItemGroup>
     <Content Include="samples\host.json" />
     <Content Include="samples\info.json" />
+    <Compile Include="AsyncSeq.fs" />
     <Compile Include="Check.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

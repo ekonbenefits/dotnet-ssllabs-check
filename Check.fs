@@ -364,7 +364,7 @@ let sslLabs (config: SslLabConfig) =
                 |> Seq.indexed
                 |> AsyncSeq.ofSeq
                 |> AsyncSeq.map parallelProcessHost
-                |> AsyncSeq.mapAsyncParallel AsyncSeq.toListAsync 
+                |> AsyncSeq.mapAsyncParallelUnordered AsyncSeq.toListAsync 
                 |> AsyncSeq.collect AsyncSeq.ofSeq
                 |> AsyncSeq.map stdoutOrStatus //Write out to console
                 |> AsyncSeq.fold (|||) ErrorStatus.Okay
