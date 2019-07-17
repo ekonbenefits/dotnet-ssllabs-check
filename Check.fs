@@ -99,6 +99,12 @@ let updateAssessmentReq curr max =
     assessmentTrack.AddOrUpdate("max", max, fun _ _ -> max) |> ignore
     assessmentTrack.AddOrUpdate("curr", curr, fun _ _ -> curr) |> ignore
 
+let checkAllowedNewAssessment () =
+    let m, max = assessmentTrack.TryGetValue("max")
+    let c, curr = assessmentTrack.TryGetValue("cur")
+    m && c && curr < max
+
+
 let parseReq parseF resp =
     let body = resp.Body 
     let max = int resp.Headers.["X-Max-Assessments"];
@@ -151,52 +157,59 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                 consoleN "%s - Unofficial Client - service unavailable" userAgent
                 failWithHttpStatus info.Status
         updateAssessmentReq cur1st max1st
+
+        //Function for polling data for a sigle host
+        let rec polledData startQ i host= asyncSeq {
+            do! Async.Sleep <| newCoolOff * i
+            if not <| checkAllowedNewAssessment () then
+                yield! polledData startQ i host
+            else
+                let! analyze = requestQ SslLabsHost.Parse "/analyze" <| ["host", host; "all", "done"] @ startQ
+                match analyze.Data with
+                | Some data ->
+                    let status = parseSslLabsError data.Status
+                    match status with
+                        | Error -> 
+                              let statusMessage = data.JsonValue.Item("statusMessage").ToString()
+                              failwithf "Error Analyzing %s - %s" host statusMessage
+                        | Ready -> yield data
+                        | Dns -> 
+                            do! Async.Sleep prePolling
+                            yield! polledData [] 0 host
+                        | InProgress -> 
+                            do! Async.Sleep inProgPolling
+                            yield! polledData [] 0 host
+                | None ->
+                    let random = Random()
+                    match analyze.Status with
+                    | HttpStatusCodes.TooManyRequests ->
+                        yield! polledData startQ i host
+                    | HttpStatusCodes.ServiceUnavailable  -> 
+                        let delay = random.Next(15_000, 30_000)
+                        consoleN "Service Unavailable trying again for '%s' in %O." host
+                            <| TimeSpan.FromMilliseconds(float delay)
+                        do! Async.Sleep <| delay
+                        yield! polledData startQ i host
+                    | 529 (* overloaded *)  -> 
+                        let delay = random.Next(30_000, 45_000)
+                        consoleN "Service Unavailable trying again for '%s' in %O." host
+                            <| TimeSpan.FromMilliseconds(float delay)
+                        do! Async.Sleep <| delay
+                        yield! polledData startQ i host
+                    | x -> failWithHttpStatus x
+        }
+
         let! es =
             asyncSeq {
+                
                 for host in hosts do
-                    //I was unsure with asyncSeq if this construction would produced unlimited stack frames,
-                    //IL was too complicated, ran debugger on slow site (over 7 minutes of polling)
-                    //stack was quite shallow!!
-                    let rec polledData startQ = asyncSeq {
-                        if not <| List.isEmpty startQ then
-                            do! Async.Sleep newCoolOff
-                        let! analyze = requestQ SslLabsHost.Parse "/analyze" <| ["host", host; "all", "done"] @ startQ
-                        match analyze.Data with
-                        | Some data ->
-                            let status = parseSslLabsError data.Status
-                            match status with
-                                | Error -> 
-                                      let statusMessage = data.JsonValue.Item("statusMessage").ToString()
-                                      failwithf "Error Analyzing %s - %s" host statusMessage
-                                | Ready -> yield data
-                                | Dns -> 
-                                    do! Async.Sleep prePolling
-                                    yield! polledData []
-                                | InProgress -> 
-                                    do! Async.Sleep inProgPolling
-                                    yield! polledData []
-                        | None ->
-                            let random = Random()
-                            match analyze.Status with
-                            | HttpStatusCodes.TooManyRequests -> 
-                                do! Async.Sleep newCoolOff 
-                                yield! polledData startQ
-                            | HttpStatusCodes.ServiceUnavailable  -> 
-                                let delay = random.Next(15_000, 30_000)
-                                consoleN "Service Unavailable trying again for '%s' in %O." host <| TimeSpan.FromMilliseconds(float delay)
-                                do! Async.Sleep <| delay
-                            | 529 (* overloaded *)  -> 
-                                let delay = random.Next(30_000, 45_000)
-                                consoleN "Service Unavailable trying again for '%s' in %O." host <| TimeSpan.FromMilliseconds(float delay)
-                                do! Async.Sleep <| delay
-                            | x -> failWithHttpStatus x
-                    }
+                    
                     try 
                         let oldPos = Console.CursorLeft, Console.CursorTop
                         let startTime = DateTime.UtcNow
                         consoleN "%s ..." host
                         Console.SetCursorPosition(oldPos)
-                        let! finalData = polledData ["startNew","on"]|> AsyncSeq.tryFirst
+                        let! finalData = polledData ["startNew","on"] 1 host |> AsyncSeq.tryFirst
                         consoleN "%s (%O): " host (DateTime.UtcNow - startTime)
                         //If output directory specified, write out json data.
                         do!
