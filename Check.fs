@@ -145,16 +145,16 @@ let requestQ parseF api q = async{
         return parseReq parseF resp
     }
 let failWithHttpStatus status = failwithf "Service Returned HTTP Status %i" status
-let hostJsonProcessor (fData: SslLabsHost.Root option) =  
+let hostJsonProcessor (data: SslLabsHost.Root option) =  
     chooseSeq {
-        let! data = fData
+        let! data' = data
         //Process Certs to find leafs
         let certMap = 
-            data.Certs
+            data'.Certs
                 |> Enumerable.toLookup (fun k->k.Subject)
                 |> Seq.map (fun l -> l.Key, l :> seq<_>)
                 |> Map.ofSeq
-        let rootSubjects = data.Certs |> Seq.map (fun c->c.IssuerSubject)
+        let rootSubjects = data'.Certs |> Seq.map (fun c->c.IssuerSubject)
         let leafCerts = certMap |> Seq.foldBack Map.remove rootSubjects
         //Check Expiration and errors of Leaf Certificates
         let leafCerts' = leafCerts |> Map.toSeq |> Seq.collect snd |> Seq.indexed 
@@ -194,7 +194,7 @@ let hostJsonProcessor (fData: SslLabsHost.Root option) =
                 yield AddStatus status  
         let (|Grade|_|) (g:string) (i:string) = if i.Contains(g) then Some () else None
         //Check grades (per endpont & host)
-        for ep in data.Endpoints do
+        for ep in data'.Endpoints do
             yield consoleN "  Endpoint '%s': " ep.IpAddress
             let status, color = 
                 match (ep.Grade) with
