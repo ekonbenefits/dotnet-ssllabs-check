@@ -21,12 +21,13 @@
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <PackageProjectUrl>https://github.com/ekonbenefits/dotnet-ssllabs-check</PackageProjectUrl>
-    <Version>1.0.3</Version>
+    <Version>2.0.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
     <Content Include="samples\host.json" />
     <Content Include="samples\info.json" />
+    <Compile Include="AsyncSeq.fs" />
     <Compile Include="Check.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
