@@ -81,33 +81,49 @@ let asyncNoOp = lazy Async.Sleep 0
 //Setup Console initial state and functions
 let originalColor = Console.ForegroundColor
 
-let consoleWriter (lineEnd:string) (color:ConsoleColor) fmt =
+
+type ResultStream =
+    | ConsoleColorText of string * ConsoleColor
+    | AddStatus of ErrorStatus
+
+let consoleStreamWriter (lineEnd:string) (color:ConsoleColor)  fmt =
     let write (s:string) =
-        Console.ForegroundColor <- color
-        Console.Write(s+lineEnd)
-        Console.ForegroundColor <- originalColor
+        ConsoleColorText(s + lineEnd, color)
     Printf.kprintf write fmt
 
-let consoleN fmt = consoleWriter Environment.NewLine originalColor fmt 
-let console fmt = consoleWriter String.Empty originalColor fmt 
-let consoleColorN color fmt = consoleWriter Environment.NewLine color fmt 
-let consoleColor color fmt = consoleWriter String.Empty color fmt 
+let consoleN fmt = consoleStreamWriter Environment.NewLine originalColor fmt 
+let console fmt = consoleStreamWriter String.Empty originalColor fmt 
+let consoleColorN color fmt = consoleStreamWriter Environment.NewLine color fmt 
+let consoleColor color fmt = consoleStreamWriter String.Empty color fmt 
+
+let stdoutOrStatus (result:ResultStream) =
+    match result with
+    | ConsoleColorText(s, color) ->
+        Console.ForegroundColor <- color
+        Console.Write(s)
+        Console.ForegroundColor <- originalColor
+        ErrorStatus.Okay
+    | AddStatus e -> e
+
+let stdout (result:ResultStream) =
+    result |> stdoutOrStatus |> ignore
 
 type SslLabConfig = { OptOutputDir: string option; Emoji: bool}
 
 let assmVer = System.Reflection.Assembly.GetEntryAssembly().GetName().Version
 let userAgent = sprintf "dotnet-ssllabs-check v%O" assmVer
 
-let assessmentTrack = ConcurrentDictionary<string,int>()
+let mutable assessmentTrack = (0,0)
 
 let updateAssessmentReq curr max =
-    assessmentTrack.AddOrUpdate("max", max, fun _ _ -> max) |> ignore
-    assessmentTrack.AddOrUpdate("curr", curr, fun _ _ -> curr) |> ignore
+    ()
+    assessmentTrack <- curr,max
+    //assessmentTrack.AddOrUpdate("max", max, fun _ _ -> max) |> ignore
+    //assessmentTrack.AddOrUpdate("curr", curr, fun _ _ -> curr) |> ignore
 
 let checkAllowedNewAssessment () =
-    let m, max = assessmentTrack.TryGetValue("max")
-    let c, curr = assessmentTrack.TryGetValue("cur")
-    m && c && curr < max
+    let curr,max = assessmentTrack
+    curr < max
 
 
 let parseReq parseF resp =
@@ -124,12 +140,12 @@ let parseReq parseF resp =
     | _ -> failwith "Request did not return text";
 
 let request parseF api  = async {
-        let! resp = Http.AsyncRequest(baseUrl + api, headers = [Hdr.UserAgent userAgent])
+        let! resp = Http.AsyncRequest(baseUrl + api, headers = [Hdr.UserAgent userAgent], silentHttpErrors = true)
         return parseReq parseF resp
     }
 
 let requestQ parseF api q = async{
-        let! resp = Http.AsyncRequest(baseUrl + api, q, headers = [Hdr.UserAgent userAgent])
+        let! resp = Http.AsyncRequest(baseUrl + api, q, headers = [Hdr.UserAgent userAgent], silentHttpErrors = true)
         return parseReq parseF resp
     }
 
@@ -158,21 +174,25 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
         let newCoolOff, cur1st, max1st =
             match info.Data with
             | Some i ->
-                consoleN "%s - Unofficial Client - (engine:%s) (criteria:%s)" userAgent i.EngineVersion i.CriteriaVersion
-                consoleN ""
+                stdout <| consoleN "%s - Unofficial Client - (engine:%s) (criteria:%s)" userAgent i.EngineVersion i.CriteriaVersion
+                stdout <| consoleN ""
                 for m in i.Messages do
-                    consoleN "%s" m
-                    consoleN ""
-                consoleN "Started: %O" DateTime.Now
-                consoleN ""
+                    stdout <| consoleN "%s" m
+                    stdout <| consoleN ""
+                stdout <| consoleN "Started: %O" DateTime.Now
+                stdout <| consoleN ""
                 if i.MaxAssessments <= 0 then
-                    consoleN "Service is not allowing you to request new assessments."
+                    stdout <| consoleN "Service is not allowing you to request new assessments."
                 i.NewAssessmentCoolOff,i.CurrentAssessments,i.MaxAssessments
             | None -> 
-                consoleN "%s - Unofficial Client - service unavailable" userAgent
+                stdout <| consoleN "%s - Unofficial Client - service unavailable" userAgent
                 failWithHttpStatus info.Status
         updateAssessmentReq cur1st max1st
-
+        
+        stdout <| consoleN "Hosts to Check:"
+        for host in hosts do
+            stdout <| consoleN " %s" host
+        stdout <| consoleN ""
         //If output directory specified, write out json data.
         do! writeJsonOutput (info.Data |> toIJsonDocOption) "info"
 
@@ -190,11 +210,12 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                         | Error -> 
                               let statusMessage = data.JsonValue.Item("statusMessage").ToString()
                               failwithf "Error Analyzing %s - %s" host statusMessage
-                        | Ready -> yield data
+                        | Ready ->
+                            yield data
                         | Dns -> 
                             do! Async.Sleep prePolling
                             yield! polledData [] 0 host
-                        | InProgress -> 
+                        | InProgress ->
                             do! Async.Sleep inProgPolling
                             yield! polledData [] 0 host
                 | None ->
@@ -204,35 +225,29 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                         yield! polledData startQ i host
                     | HttpStatusCodes.ServiceUnavailable  -> 
                         let delay = random.Next(15_000, 30_000)
-                        consoleN "Service Unavailable trying again for '%s' in %O." host
-                            <| TimeSpan.FromMilliseconds(float delay)
+                        TimeSpan.FromMilliseconds(float delay) 
+                            |> consoleN "Service Unavailable trying again for '%s' in %O." host
+                            |> stdout
                         do! Async.Sleep <| delay
                         yield! polledData startQ i host
                     | 529 (* overloaded *)  -> 
                         let delay = random.Next(30_000, 45_000)
-                        consoleN "Service Unavailable trying again for '%s' in %O." host
-                            <| TimeSpan.FromMilliseconds(float delay)
+                        TimeSpan.FromMilliseconds(float delay)
+                            |> consoleN "Service Unavailable trying again for '%s' in %O." host
+                            |> stdout 
                         do! Async.Sleep <| delay
                         yield! polledData startQ i host
                     | x -> failWithHttpStatus x
         }
 
-        let! es =
+        let resultStream =
             asyncSeq {
-                
                 for host in hosts do
-                    
                     try 
-                        let oldPos = Console.CursorLeft, Console.CursorTop
                         let startTime = DateTime.UtcNow
-                        consoleN "%s ..." host
-                        Console.SetCursorPosition(oldPos)
                         let! finalData = polledData ["startNew","on"] 1 host |> AsyncSeq.tryFirst
-                        consoleN "%s (%O): " host (DateTime.UtcNow - startTime)
-
                         //If output directory specified, write out json data.
                         do! writeJsonOutput (finalData |> toIJsonDocOption) host
-                            
                         //Check a single Host and bitwise OR error codes.
                         let hostCheck (fData: SslLabsHost.Root option) =  
                             chooseSeq {
@@ -253,7 +268,7 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                                     //Ignore certs not for this domain
                                     if not <| issue.HasFlag(CertIssue.HostnameMismatch) then
                                         let cn = cert.CommonNames |> Seq.head
-                                        consoleN "  Certificate '%s' %s %i bit:" cn cert.KeyAlg cert.KeySize
+                                        yield consoleN "  Certificate '%s' %s %i bit:" cn cert.KeyAlg cert.KeySize
                                         let expireSpan = endDate - DateTimeOffset DateTime.UtcNow
                                         let warningSpan = if endDate - startDate > TimeSpan.FromDays 90.0 then
                                                               TimeSpan.FromDays 90.0
@@ -261,9 +276,9 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                                                               TimeSpan.FromDays 30.0
                                         //Check for Issues
                                         if issue <> CertIssue.Okay then
-                                            console "    Problem(s): "
-                                            consoleColorN ConsoleColor.DarkRed "%A" issue
-                                            yield ErrorStatus.CertIssue
+                                            yield console "    Problem(s): "
+                                            yield consoleColorN ConsoleColor.DarkRed "%A" issue
+                                            yield AddStatus ErrorStatus.CertIssue
                                         //Check Expiration of Cert
                                         let status, color, label =
                                             if expireSpan <=TimeSpan.FromDays 0.0 then
@@ -273,63 +288,76 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                                             else
                                                 ErrorStatus.Okay, ConsoleColor.DarkGreen, "Expires"
                                         
-                                        console "    %s: " label
+                                        yield console "    %s: " label
                                         let expiration = expireSpan.Days;
                                         if expiration > 0 then
-                                            consoleColorN color "%i days from today" expiration
+                                            yield consoleColorN color "%i days from today" expiration
                                         else
-                                            consoleColorN color "%i days ago" <| abs(expiration)
-                                        yield status  
+                                            yield consoleColorN color "%i days ago" <| abs(expiration)
+                                        yield AddStatus status  
 
                                 let (|Grade|_|) (g:string) (i:string) = if i.Contains(g) then Some () else None
                                 //Check grades (per endpont & host)
                                 for ep in data.Endpoints do
-                                    consoleN "  Endpoint '%s': " ep.IpAddress
+                                    yield consoleN "  Endpoint '%s': " ep.IpAddress
                                     let status, color = 
                                         match (ep.Grade) with
                                         | Grade "A" -> ErrorStatus.Okay, ConsoleColor.DarkGreen
                                         | Grade "B" -> ErrorStatus.GradeB, ConsoleColor.DarkYellow
                                         | _ -> ErrorStatus.NotGradeAOrB, ConsoleColor.DarkRed
-                                    console "    Grade: "
-                                    consoleColorN color "%s" ep.Grade
-                                    yield status
+                                    yield console "    Grade: "
+                                    yield consoleColorN color "%s" ep.Grade
+                                    yield AddStatus status
 
                             }
-
-                        let hostEs = finalData |> hostCheck  |> Seq.fold (|||) ErrorStatus.Okay
+                        let hostResults = finalData |> hostCheck
+                        yield consoleN "%s (%O): " host (DateTime.UtcNow - startTime)
+                        yield! AsyncSeq.ofSeq hostResults
+                        let hostEs = 
+                            hostResults
+                            |> Seq.choose (function|AddStatus e-> Some e|_->None)
+                            |> Seq.fold (|||) ErrorStatus.Okay
                         //Error Summary
                         if hostEs <> ErrorStatus.Okay then
-                            consoleN "  Has Error(s): %A" hostEs
+                            yield consoleN "  Has Error(s): %A" hostEs
                         //SSL Labs link
-                        consoleN "  Details:"
-                        consoleColorN ConsoleColor.DarkBlue "    https://www.ssllabs.com/ssltest/analyze.html?d=%s" host
-                        consoleN ""
-                        //yield host error codes to be bitwise or'd into final summary
-                        yield hostEs
+                        yield consoleN "  Details:"
+                        yield consoleColorN ConsoleColor.DarkBlue "    https://www.ssllabs.com/ssltest/analyze.html?d=%s" host
+                        yield consoleN ""
                     with ex -> 
-                        consoleN "Unexpected Error (%s)" host
-                        consoleN "  Result: %A" ErrorStatus.ExceptionThrown
-                        let rec printExn : exn -> unit =
+                        yield consoleN "Unexpected Error (%s)" host
+                        yield consoleN "  Result: %A" ErrorStatus.ExceptionThrown
+                        let rec printExn : exn -> ResultStream seq =
                             function
-                                     | null -> ()
+                                     | null -> Seq.empty
                                      | :? AggregateException as multiEx -> 
-                                            for ie in multiEx.Flatten().InnerExceptions do
-                                                printExn ie
+                                            seq {
+                                                for ie in multiEx.Flatten().InnerExceptions do
+                                                    yield! printExn ie
+                                            }
                                      | singleEx -> 
-                                        consoleN "%s" singleEx.Message
-                                        consoleN "%s" singleEx.StackTrace
-                                        printExn singleEx.InnerException
-                        printExn ex
-                        consoleN ""
-                        yield ErrorStatus.ExceptionThrown
-            } |> AsyncSeq.fold (|||) ErrorStatus.Okay
+                                        seq {
+                                            yield consoleN "%s" singleEx.Message
+                                            yield consoleN "%s" singleEx.StackTrace
+                                            yield! printExn singleEx.InnerException
+                                        }
+                        yield! AsyncSeq.ofSeq <| printExn ex
+                        yield consoleN ""
+                        yield AddStatus ErrorStatus.ExceptionThrown
+            }
+        let! es = 
+            resultStream 
+            |> AsyncSeq.map stdoutOrStatus 
+            |> AsyncSeq.fold (|||) ErrorStatus.Okay
+
+        stdout <| consoleN "Completed: %O" DateTime.Now
+        
         //Final Error Summary
-        consoleN "Completed: %O" DateTime.Now
         if es = ErrorStatus.Okay then
-            consoleN "All Clear%s." (emoji " 😃")
+            stdout <| consoleN "All Clear%s." (emoji " 😃")
         else
             let scream = emoji " 😱"
             let frown = emoji " 😦"
-            consoleN "Found Error(s)%s: %A" (if es <= ErrorStatus.GradeB then frown else scream) es
+            stdout <| consoleN "Found Error(s)%s: %A" (if es <= ErrorStatus.GradeB then frown else scream) es
         return int es
     }
