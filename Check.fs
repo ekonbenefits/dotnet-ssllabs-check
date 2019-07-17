@@ -20,6 +20,7 @@ open System.IO
 open FSharp.Control
 open FSharp.Data
 open FSharp.Interop.Compose.Linq
+open FSharp.Interop.Compose.System
 open FSharp.Interop.NullOptAble
 open FSharp.Interop.NullOptAble.Operators
 
@@ -156,14 +157,15 @@ let hostJsonProcessor (fData: SslLabsHost.Root option) =
         let rootSubjects = data.Certs |> Seq.map (fun c->c.IssuerSubject)
         let leafCerts = certMap |> Seq.foldBack Map.remove rootSubjects
         //Check Expiration and errors of Leaf Certificates
-        for cert in leafCerts |> Map.toSeq |> Seq.collect snd do
+        let leafCerts' = leafCerts |> Map.toSeq |> Seq.collect snd |> Seq.indexed 
+        for i,cert in leafCerts' do
             let startDate = DateTimeOffset.FromUnixTimeMilliseconds(cert.NotBefore)
             let endDate = DateTimeOffset.FromUnixTimeMilliseconds(cert.NotAfter)
             let issue:CertIssue = enum cert.Issues
             //Ignore certs not for this domain
             if not <| issue.HasFlag(CertIssue.HostnameMismatch) then
-                let cn = cert.CommonNames |> Seq.head
-                yield consoleN "  Certificate '%s' %s %i bit:" cn cert.KeyAlg cert.KeySize
+                yield consoleN "  Certificate #%i %s %i bit:" (i+1) cert.KeyAlg cert.KeySize
+                yield consoleN "    CN: %s" (cert.CommonNames |> String.join ", ")
                 let expireSpan = endDate - DateTimeOffset DateTime.UtcNow
                 let warningSpan = if endDate - startDate > TimeSpan.FromDays 90.0 then
                                         TimeSpan.FromDays 90.0
