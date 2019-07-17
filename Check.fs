@@ -63,6 +63,7 @@ let toIJsonDocOption target : IJsonDocument option =
 //Constants suggestion from the api docs
 // https://github.com/ssllabs/ssllabs-scan/blob/master/ssllabs-api-docs-v3.md#access-rate-and-rate-limiting
 let baseUrl = "https://api.ssllabs.com/api/v3"
+let appUrl = "https://www.ssllabs.com/ssltest/analyze.html"
 let prePolling = 5_000
 let inProgPolling = 10_000
 let private random = Random()
@@ -203,7 +204,13 @@ let hostJsonProcessor (fData: SslLabsHost.Root option) =
             yield AddStatus status
     }
 //Check host list against SSLLabs.com
-type SslLabConfig = { OptOutputDir: string option; Emoji: bool; VersionOnly: bool; Hosts: string seq; HostFile:string option}
+type SslLabConfig = { 
+                        OptOutputDir: string option
+                        Emoji:        bool
+                        VersionOnly:  bool
+                        Hosts:        string seq
+                        HostFile:     string option
+                    }
 let sslLabs (config: SslLabConfig) =
     //Configure if showing emoji
     let emoji s = if config.Emoji then s else String.Empty
@@ -304,7 +311,9 @@ let sslLabs (config: SslLabConfig) =
             let parallelProcessHost (i, host)  = asyncSeq {
                 try 
                     let startTime = DateTime.UtcNow
-                    let! data = pollUntilData ["startNew","on"] i host |> AsyncSeq.tryFirst
+                    let! data = 
+                        pollUntilData ["startNew","on"] (i + 1) host
+                        |> AsyncSeq.tryFirst
                     //If output directory specified, write out json data.
                     do! writeJsonOutput (data |> toIJsonDocOption) host
                     //Process host results
@@ -320,7 +329,7 @@ let sslLabs (config: SslLabConfig) =
                         yield consoleN "  Has Error(s): %A" hostEs
                     //SSL Labs link
                     yield consoleN "  Details:"
-                    yield consoleColorNN ConsoleColor.Blue "    https://www.ssllabs.com/ssltest/analyze.html?d=%s" host
+                    yield consoleColorNN ConsoleColor.Blue "    %s?d=%s" appUrl host
                 with ex -> 
                     yield consoleN "%s (Unexpected Error):" host
                     yield consoleN "  Has Error(s): %A" ErrorStatus.ExceptionThrown
