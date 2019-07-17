@@ -17,6 +17,7 @@ module Check
 
 open System
 open System.IO
+open System.Collections.Concurrent
 open FSharp.Control
 open FSharp.Data
 open FSharp.Interop.Compose.Linq
@@ -92,14 +93,22 @@ type SslLabConfig = { OptOutputDir: string option; Emoji: bool}
 let assmVer = System.Reflection.Assembly.GetEntryAssembly().GetName().Version
 let userAgent = sprintf "dotnet-ssllabs-check v%O" assmVer
 
+let assessmentTrack = ConcurrentDictionary<string,int>()
+
+let updateAssessmentReq curr max =
+    assessmentTrack.AddOrUpdate("max", max, fun _ _ -> max) |> ignore
+    assessmentTrack.AddOrUpdate("curr", curr, fun _ _ -> curr) |> ignore
+
 let parseReq parseF resp =
-    match resp.Body with
+    let body = resp.Body 
+    let max = int resp.Headers.["X-Max-Assessments"];
+    let curr = int resp.Headers.["X-Current-Assessments"] 
+    updateAssessmentReq curr max
+    match body with
     | Text text -> 
         {|
             Data = option { if resp.StatusCode = HttpStatusCodes.OK then return parseF text}
             Status = resp.StatusCode
-            MaxAssesments = int resp.Headers.["X-Max-Assessments"]
-            CurrentAssesments = int resp.Headers.["X-Current-Assessments"] 
         |}
     | _ -> failwith "Request did not return text";
 
@@ -141,13 +150,14 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
             | None -> 
                 consoleN "%s - Unofficial Client - service unavailable" userAgent
                 failWithHttpStatus info.Status
+        updateAssessmentReq cur1st max1st
         let! es =
             asyncSeq {
                 for host in hosts do
                     //I was unsure with asyncSeq if this construction would produced unlimited stack frames,
                     //IL was too complicated, ran debugger on slow site (over 7 minutes of polling)
                     //stack was quite shallow!!
-                    let rec polledData startQ current max = asyncSeq {
+                    let rec polledData startQ = asyncSeq {
                         if not <| List.isEmpty startQ then
                             do! Async.Sleep newCoolOff
                         let! analyze = requestQ SslLabsHost.Parse "/analyze" <| ["host", host; "all", "done"] @ startQ
@@ -161,16 +171,16 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                                 | Ready -> yield data
                                 | Dns -> 
                                     do! Async.Sleep prePolling
-                                    yield! polledData [] analyze.CurrentAssesments analyze.MaxAssesments
+                                    yield! polledData []
                                 | InProgress -> 
                                     do! Async.Sleep inProgPolling
-                                    yield! polledData [] analyze.CurrentAssesments analyze.MaxAssesments
+                                    yield! polledData []
                         | None ->
                             let random = Random()
                             match analyze.Status with
                             | HttpStatusCodes.TooManyRequests -> 
                                 do! Async.Sleep newCoolOff 
-                                yield! polledData startQ analyze.CurrentAssesments analyze.MaxAssesments
+                                yield! polledData startQ
                             | HttpStatusCodes.ServiceUnavailable  -> 
                                 let delay = random.Next(15_000, 30_000)
                                 consoleN "Service Unavailable trying again for '%s' in %O." host <| TimeSpan.FromMilliseconds(float delay)
@@ -186,7 +196,7 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                         let startTime = DateTime.UtcNow
                         consoleN "%s ..." host
                         Console.SetCursorPosition(oldPos)
-                        let! finalData = polledData ["startNew","on"] cur1st max1st |> AsyncSeq.tryFirst
+                        let! finalData = polledData ["startNew","on"]|> AsyncSeq.tryFirst
                         consoleN "%s (%O): " host (DateTime.UtcNow - startTime)
                         //If output directory specified, write out json data.
                         do!
