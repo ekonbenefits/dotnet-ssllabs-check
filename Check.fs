@@ -91,18 +91,25 @@ let consoleStreamWriter (lineEnd:string) (color:ConsoleColor)  fmt =
         ConsoleColorText(s + lineEnd, color)
     Printf.kprintf write fmt
 
-let consoleN fmt = consoleStreamWriter Environment.NewLine originalColor fmt 
+ 
+let consoleN fmt = consoleStreamWriter Environment.NewLine originalColor fmt
+let consoleNN fmt = consoleStreamWriter (Environment.NewLine + Environment.NewLine) originalColor fmt 
 let console fmt = consoleStreamWriter String.Empty originalColor fmt 
 let consoleColorN color fmt = consoleStreamWriter Environment.NewLine color fmt 
+let consoleColorNN color fmt = consoleStreamWriter (Environment.NewLine + Environment.NewLine)  color fmt 
 let consoleColor color fmt = consoleStreamWriter String.Empty color fmt 
 
+let private consoleMonitor = obj()
 let stdoutOrStatus (result:ResultStream) =
     match result with
     | ConsoleColorText(s, color) ->
-        Console.ForegroundColor <- color
-        Console.Write(s)
-        Console.ForegroundColor <- originalColor
-        ErrorStatus.Okay
+        lock(consoleMonitor) (
+            fun () ->
+                Console.ForegroundColor <- color
+                Console.Write(s)
+                Console.ForegroundColor <- originalColor
+                ErrorStatus.Okay
+        )
     | AddStatus e -> e
 
 let stdout (result:ResultStream) =
@@ -150,7 +157,7 @@ let requestQ parseF api q = async{
         return parseReq parseF resp
     }
 
-let failWithHttpStatus status = failwithf "Service Returned Status %i" status
+let failWithHttpStatus status = failwithf "Service Returned HTTP Status %i" status
 
 //Check host list against SSLLabs.com
 let sslLabs (config: SslLabConfig) (hosts:string seq) =
@@ -175,13 +182,10 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
         let newCoolOff, cur1st, max1st =
             match info.Data with
             | Some i ->
-                stdout <| consoleN "%s - Unofficial Client - (engine:%s) (criteria:%s)" userAgent i.EngineVersion i.CriteriaVersion
-                stdout <| consoleN ""
+                stdout <| consoleNN "%s - Unofficial Client - (engine:%s) (criteria:%s)" userAgent i.EngineVersion i.CriteriaVersion
                 for m in i.Messages do
-                    stdout <| consoleN "%s" m
-                    stdout <| consoleN ""
-                stdout <| consoleN "Started: %O" DateTime.Now
-                stdout <| consoleN ""
+                    stdout <| consoleNN "%s" m
+                stdout <| consoleNN "Started: %O" DateTime.Now
                 i.NewAssessmentCoolOff,i.CurrentAssessments,i.MaxAssessments
             | None -> 
                 stdout <| consoleN "%s - Unofficial Client - service unavailable" userAgent
@@ -190,8 +194,7 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
         
         stdout <| consoleN "Hosts to Check:"
         for host in hosts do
-            stdout <| consoleN " %s" host
-        stdout <| consoleN ""
+            stdout <| consoleNN " %s" host
         //If output directory specified, write out json data.
         do! writeJsonOutput (info.Data |> toIJsonDocOption) "info"
 
@@ -225,14 +228,14 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                     | HttpStatusCodes.ServiceUnavailable  -> 
                         let delay = random.Next(15_000, 30_000)
                         TimeSpan.FromMilliseconds(float delay) 
-                            |> consoleN "Service Unavailable trying again for '%s' in %O." host
+                            |> consoleNN "Service Unavailable trying again for '%s' in %O." host
                             |> stdout
                         do! Async.Sleep <| delay
                         yield! polledData startQ i host
                     | 529 (* overloaded *)  -> 
                         let delay = random.Next(30_000, 45_000)
                         TimeSpan.FromMilliseconds(float delay)
-                            |> consoleN "Service Unavailable trying again for '%s' in %O." host
+                            |> consoleNN "Service Unavailable trying again for '%s' in %O." host
                             |> stdout 
                         do! Async.Sleep <| delay
                         yield! polledData startQ i host
@@ -322,8 +325,7 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                     yield consoleN "  Has Error(s): %A" hostEs
                 //SSL Labs link
                 yield consoleN "  Details:"
-                yield consoleColorN ConsoleColor.DarkBlue "    https://www.ssllabs.com/ssltest/analyze.html?d=%s" host
-                yield consoleN ""
+                yield consoleColorNN ConsoleColor.DarkBlue "    https://www.ssllabs.com/ssltest/analyze.html?d=%s" host
             with ex -> 
                 yield consoleN "%s (Unexpected Error):" host
                 yield consoleN "  Has Error(s): %A" ErrorStatus.ExceptionThrown
@@ -343,8 +345,7 @@ let sslLabs (config: SslLabConfig) (hosts:string seq) =
                                     yield! printExn singleEx.InnerException
                                 }
                 yield! AsyncSeq.ofSeq <| printExn ex
-                yield consoleN "--------------"
-                yield consoleN ""
+                yield consoleNN "--------------"
                 yield AddStatus ErrorStatus.ExceptionThrown
             }
 
