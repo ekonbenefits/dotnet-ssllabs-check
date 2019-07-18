@@ -102,6 +102,10 @@ let serviceOverloadedPolling () =
     random.Next(30, 45)
     |> float
     |> TimeSpan.FromMinutes
+let tooManyReqPolling () =
+    random.Next(5, 20)
+    |> float
+    |> TimeSpan.FromSeconds
 
 //Setup Console initial state and functions
 let originalColor = Console.ForegroundColor
@@ -154,6 +158,8 @@ let private parseReq parseF resp =
     let body = resp.Body 
     let max = int resp.Headers.["X-Max-Assessments"];
     let curr = int resp.Headers.["X-Current-Assessments"] 
+    //Undocumented Client Max Value for Debuging
+    let maxClient = resp.Headers.TryFind("X-ClientMaxAssessments")
     updateAssessmentReq curr max
     match body with
     | Text text -> 
@@ -161,6 +167,7 @@ let private parseReq parseF resp =
             Data = option { if resp.StatusCode = HttpStatusCodes.OK then return parseF text}
             Status = resp.StatusCode
             Assessments = (curr, max)
+            ClientMax = maxClient
         |}
     | _ -> failwith "Request did not return text";
 let request baseUrl parseF api  = async {
@@ -329,11 +336,13 @@ let sslLabs (config: SslLabConfig) =
                     yield! pollUntilData startQ i host
                 else 
                     if newAssess then
-                        stdoutL Debug <| consoleN "%O Starting New Assesment '%s'#%i (Available: %i/%i)" DateTime.Now host i c m
+                        stdoutL Debug <| consoleN "%O Attempt New Assesment '%s'#%i (Available: %i/%i)" DateTime.Now host i c m
                     let! analyze = requestQ' SslLabsHost.Parse "/analyze" <| ["host", host; "all", "done"] @ startQ
                     let c',m' = analyze.Assessments
                     match analyze.Data with
                     | Some data ->
+                        if newAssess then
+                            stdoutL Debug <| consoleN "%O Started New Assesment '%s'#%i (Available: %i/%i)" DateTime.Now host i c m
                         let status = parseSslLabsError data.Status
                         stdoutL Trace <| consoleN "%O Poll Data for '%s' (Available: %i/%i) (HttpStatus:%i) (Status:%A)" DateTime.Now host c' m' analyze.Status status
                         match status with
@@ -349,9 +358,11 @@ let sslLabs (config: SslLabConfig) =
                                 do! Async.sleepTimeSpan inProgPolling
                                 yield! pollUntilData [] 0 host
                     | None ->
-                        stdoutL Trace <| consoleN "%O Poll Data for '%s' (Available: %i/%i) (HttpStatus:%i)" DateTime.Now host c' m' analyze.Status
+                        let reqType = if newAssess then "start" else "poll"
+                        stdoutL Debug <| consoleN "%O Request (%s) Failed for '%s' (Available: %i/%i) (HttpStatus:%i) (ClientMax?:%A)" DateTime.Now reqType host c' m' analyze.Status analyze.ClientMax
                         match analyze.Status with
                         | HttpStatusCodes.TooManyRequests ->
+                            do! Async.sleepTimeSpan <| serviceUnavailablePolling ()  //Random slow down if we are getting 429, seems to happen sometimes even with new assesment slots
                             yield! pollUntilData startQ i host
                         | HttpStatusCodes.ServiceUnavailable  -> 
                             let delay = serviceUnavailablePolling ()
