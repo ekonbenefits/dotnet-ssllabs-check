@@ -54,7 +54,9 @@ type SslLabsError =
     | Error
 type ConsoleLevel = 
     Error
+    | Warn
     | Info
+    | Progress
     | Debug
     | Trace
 
@@ -67,9 +69,18 @@ let parseSslLabsError =
 let parseConsoleError = 
     String.toLower >>
     function | "error" -> ConsoleLevel.Error 
+             | "warn" -> Warn
              | "trace" -> Trace 
-             | "debug" -> Debug 
+             | "debug" -> Debug
+             | "progress" -> Progress 
              | _ -> Info
+let levelForErrorStatus errorStatus =
+    if errorStatus = ErrorStatus.Okay then
+        Info
+    elif errorStatus <= ErrorStatus.GradeB then
+        Warn
+    else
+        Error
 let toIJsonDocOption target : IJsonDocument option =
     target |> Option.map (fun x-> upcast x)
 module Async =
@@ -249,9 +260,9 @@ let sslLabs (config: SslLabConfig) =
     let requestQ' = requestQ baseUrl
 
     //setup some level functions
-    let verboseLevel = defaultArg (config.Verbosity |> Option.map parseConsoleError) Info
+    let verboseLevel = defaultArg (config.Verbosity |> Option.map parseConsoleError) Progress
     let verboseFilter level result = if level <= verboseLevel then result else NoOp
-    let infoF = verboseFilter Info
+    let progressF = verboseFilter Progress
     let stdout = stdoutBy (Trace,Trace) //Always Print
     let stdoutL level = stdoutBy (verboseLevel, level)
     let stdoutOrStatus = stdoutOrStatusBy (Trace,Trace) //Always Print
@@ -297,7 +308,7 @@ let sslLabs (config: SslLabConfig) =
             stdoutL Info  <| consoleNN "Assessments Available %i of %i" cur1st max1st
             return int ErrorStatus.Okay
         else
-            stdoutL Info <| consoleNN "Started: %O" DateTime.Now
+            stdoutL Progress <| consoleNN "Started: %O" DateTime.Now
             stdoutL Info  <| consoleN "Hostnames to Check:"
             for host in hosts do
                 stdoutL Info  <| consoleN " %s" host
@@ -373,11 +384,12 @@ let sslLabs (config: SslLabConfig) =
                     //Process host results
                     let hostResults = data |> hostJsonProcessor
                     yield consoleN "%s: " host
-                    yield! AsyncSeq.ofSeq hostResults
                     let hostEs = 
                         hostResults
                         |> Seq.choose (function|AddStatus e->Some e|_->None)
                         |> Seq.fold (|||) ErrorStatus.Okay
+                    let hostLevel = levelForErrorStatus hostEs
+                    yield! hostResults |> Seq.map (verboseFilter hostLevel) |> AsyncSeq.ofSeq
                     //Error Summary
                     if hostEs <> ErrorStatus.Okay then
                         yield consoleN "  Has Error(s): %A" hostEs
@@ -415,12 +427,12 @@ let sslLabs (config: SslLabConfig) =
                 |> AsyncSeq.map parallelProcessHost
                 |> AsyncSeq.mapAsyncParallelUnordered AsyncSeq.toListAsync
                 |> AsyncSeq.indexed
-                |> AsyncSeq.map (fun (i, tail) -> (infoF <| consoleN "-- %d of %i --- %O --" (i+1L) totalHosts (DateTime.UtcNow - startTime)) :: tail )
+                |> AsyncSeq.map (fun (i, tail) -> (progressF <| consoleN "-- %d of %i --- %O --" (i+1L) totalHosts (DateTime.UtcNow - startTime)) :: tail )
                 |> AsyncSeq.collect AsyncSeq.ofSeq
                 |> AsyncSeq.choose stdoutOrStatus //Write out to console
                 |> AsyncSeq.fold (|||) ErrorStatus.Okay
 
-            stdoutL Info <| consoleN "Completed: %O" DateTime.Now
+            stdoutL Progress <| consoleN "Completed: %O" DateTime.Now
             //Final Error Summary
             if es = ErrorStatus.Okay then
                 stdout <| consoleN "All Clear%s." (emoji " 😃")

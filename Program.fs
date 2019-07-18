@@ -49,9 +49,9 @@ let main argv =
                          .Accepts(validator(fun x-> x.ExistingFile()))
 
     let optVerbose = app.Option<string>("--verbosity <LEVEL>", 
-                         "Level of data written to the console (error,info,debug,trace) [default: info]", 
+                         "Level of data written to the console (error,warn,info,progress,debug,trace) [default: progress]", 
                          CommandOptionType.SingleValue)
-                         .Accepts(validator(fun x-> x.Values(true,"error","info","debug","trace")))
+                         .Accepts(validator(fun x-> x.Values(true,"error","warn","info","progress","debug","trace")))
     let optAPI = app.Option<string>("--api <API>", 
                        "Alternative API endpoint (ie. preproduction: https://api.dev.ssllabs.com/api/v3/)", 
                        CommandOptionType.SingleValue)
