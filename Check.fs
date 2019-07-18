@@ -52,12 +52,24 @@ type SslLabsError =
     | Dns
     | InProgress
     | Error
+type ConsoleLevel = 
+    Error
+    | Info
+    | Debug
+    | Trace
+
 type IJsonDocument = FSharp.Data.Runtime.BaseTypes.IJsonDocument
 let parseSslLabsError = 
     function | "READY" -> Ready 
              | "DNS" -> Dns 
              | "IN_PROGRESS" -> InProgress 
-             | _ -> Error
+             | _ -> SslLabsError.Error
+let parseConsoleError = 
+    String.toLower >>
+    function | "error" -> ConsoleLevel.Error 
+             | "trace" -> Trace 
+             | "debug" -> Debug 
+             | _ -> Info
 let toIJsonDocOption target : IJsonDocument option =
     target |> Option.map (fun x-> upcast x)
 module Async =
@@ -66,7 +78,7 @@ module Async =
 
 //Constants suggestion from the api docs
 // https://github.com/ssllabs/ssllabs-scan/blob/master/ssllabs-api-docs-v3.md#access-rate-and-rate-limiting
-let baseUrl = "https://api.ssllabs.com/api/v3"
+let builtInBaseUrl = "https://api.ssllabs.com/api/v3"
 let appUrl = "https://www.ssllabs.com/ssltest/analyze.html"
 let prePolling = TimeSpan.FromSeconds(5.0)
 let inProgPolling = TimeSpan.FromSeconds(10.0)
@@ -83,6 +95,7 @@ let serviceOverloadedPolling () =
 //Setup Console initial state and functions
 let originalColor = Console.ForegroundColor
 type ResultStream =
+    | NoOp
     | ConsoleColorText of string * ConsoleColor
     | AddStatus of ErrorStatus
 let private consoleStreamWriter (lineEnd:string) (color:ConsoleColor)  fmt =
@@ -96,33 +109,32 @@ let consoleColorN color fmt = consoleStreamWriter Environment.NewLine color fmt
 let consoleColorNN color fmt = consoleStreamWriter (Environment.NewLine + Environment.NewLine)  color fmt 
 let consoleColor color fmt = consoleStreamWriter String.Empty color fmt 
 let private consoleMonitor = obj()
-let stdoutOrStatus (result:ResultStream) =
+let stdoutOrStatusBy (optLevel, specifiedLevel) (result:ResultStream) =
     match result with
     | ConsoleColorText(s, color) ->
-        lock(consoleMonitor) (
-            fun () ->
-                Console.ForegroundColor <- color
-                Console.Write(s)
-                Console.ForegroundColor <- originalColor
-                ErrorStatus.Okay
-        )
-    | AddStatus e -> e
-let stdout (result:ResultStream) =
-    result |> stdoutOrStatus |> ignore
+        if specifiedLevel <= optLevel then
+            lock(consoleMonitor) (
+                fun () ->
+                    Console.ForegroundColor <- color
+                    Console.Write(s)
+                    Console.ForegroundColor <- originalColor
+            )
+        None
+    | AddStatus e -> Some e
+    | NoOp  -> None
+let stdoutBy (optLevel, specifiedLevel) (result:ResultStream) =
+    result |> stdoutOrStatusBy (optLevel, specifiedLevel) |> ignore
 
 // Global Assement quote variable to track when to slow down assessments when there are too many
 let assessmentTrack = ref (0,0)
 let updateAssessmentReq curr max =
     lock assessmentTrack (fun () -> assessmentTrack := curr,max)
 let checkAllowedNewAssessment () =
-    lock assessmentTrack (
-        fun () ->
-            let curr,max = !assessmentTrack
-            if max <= 0 then
-                failwithf "Service is not allowing you to request new assessments (%i, %i). " curr max
-            else
-                curr < max
-    )
+    let curr,max = lock assessmentTrack (fun () -> !assessmentTrack)
+    if max <= 0 then
+        failwithf "Service is not allowing you to request new assessments (%i, %i). " curr max
+    else
+        curr < max, curr, max
 
 // HTTP Request Code
 let assmVer = System.Reflection.Assembly.GetEntryAssembly().GetName().Version
@@ -137,13 +149,14 @@ let private parseReq parseF resp =
         {|
             Data = option { if resp.StatusCode = HttpStatusCodes.OK then return parseF text}
             Status = resp.StatusCode
+            Assessments = (curr, max)
         |}
     | _ -> failwith "Request did not return text";
-let request parseF api  = async {
+let request baseUrl parseF api  = async {
         let! resp = Http.AsyncRequest(baseUrl + api, headers = [Hdr.UserAgent userAgent], silentHttpErrors = true)
         return parseReq parseF resp
     }
-let requestQ parseF api q = async{
+let requestQ baseUrl parseF api q = async{
         let! resp = Http.AsyncRequest(baseUrl + api, q, headers = [Hdr.UserAgent userAgent], silentHttpErrors = true)
         return parseReq parseF resp
     }
@@ -219,12 +232,29 @@ type SslLabConfig = {
                         VersionOnly:  bool
                         Hosts:        string seq
                         HostFile:     string option
+                        Verbosity:    string option
+                        API:          string option
                     }
 let sslLabs (config: SslLabConfig) =
     //Configure if showing emoji
     let emoji s = if config.Emoji then s else String.Empty
     if config.Emoji then
         Console.OutputEncoding <- System.Text.Encoding.UTF8
+
+    let baseUrl = option { let! api = config.API
+                           return api |> String.trimEnd [|'/'|]
+                         } |?-> lazy builtInBaseUrl
+
+    let request' = request baseUrl
+    let requestQ' = requestQ baseUrl
+
+    //setup some level functions
+    let verboseLevel = defaultArg (config.Verbosity |> Option.map parseConsoleError) Info
+    let verboseFilter level result = if level <= verboseLevel then result else NoOp
+    let infoF = verboseFilter Info
+    let stdout = stdoutBy (Trace,Trace) //Always Print
+    let stdoutL level = stdoutBy (verboseLevel, level)
+    let stdoutOrStatus = stdoutOrStatusBy (Trace,Trace) //Always Print
 
     let writeJsonOutput (fData:IJsonDocument option) identifier =
         let asyncNoOp = lazy Async.Sleep 0
@@ -239,7 +269,7 @@ let sslLabs (config: SslLabConfig) =
     //Main Logic
     async {
         //Print out SSL Labs Info
-        let! info = request SslLabsInfo.Parse "/info"
+        let! info = request' SslLabsInfo.Parse "/info"
         let newCoolOff, cur1st, max1st =
             match info.Data with
             | Some i ->
@@ -261,34 +291,46 @@ let sslLabs (config: SslLabConfig) =
                         }
                      } |?-> lazy (async { return config.Hosts })
 
+        if config.API |> Option.isSome then
+            stdoutL Info  <| consoleNN "API: %s" baseUrl
         if config.VersionOnly then
-            stdout <| consoleNN "Assessments Available %i of %i" cur1st max1st
+            stdoutL Info  <| consoleNN "Assessments Available %i of %i" cur1st max1st
             return int ErrorStatus.Okay
         else
-            stdout <| consoleNN "Started: %O" DateTime.Now
-            stdout <| consoleN "Hostnames to Check:"
+            stdoutL Info <| consoleNN "Started: %O" DateTime.Now
+            stdoutL Info  <| consoleN "Hostnames to Check:"
             for host in hosts do
-                stdout <| consoleN " %s" host
-            stdout <| consoleN ""
+                stdoutL Info  <| consoleN " %s" host
+            stdoutL Info  <| consoleN ""
             //If output directory specified, write out json data.
             do! writeJsonOutput (info.Data |> toIJsonDocOption) "info"
 
             //polling data for a single host
             let rec pollUntilData startQ i host= asyncSeq {
-                do! Async.Sleep <| newCoolOff * i
-                if not <| checkAllowedNewAssessment () then
-                    yield! pollUntilData startQ (i + 1) host
-                else
-                    let! analyze = requestQ SslLabsHost.Parse "/analyze" <| ["host", host; "all", "done"] @ startQ
+                let newAssess = startQ |> Seq.isEmpty |> not
+                if newAssess then
+                    do! Async.Sleep <| newCoolOff * i
+                let allowed,c,m =checkAllowedNewAssessment () 
+               
+                if newAssess && not allowed then
+                    stdoutL Trace <| consoleN "%O Waiting For Assesment Slot '%s'#%i (Available: %i/%i)" DateTime.Now host i c m
+                    do! Async.sleepTimeSpan inProgPolling
+                    yield! pollUntilData startQ i host
+                else 
+                    if newAssess then
+                        stdoutL Debug <| consoleN "%O Starting New Assesment '%s'#%i (Available: %i/%i)" DateTime.Now host i c m
+                    let! analyze = requestQ' SslLabsHost.Parse "/analyze" <| ["host", host; "all", "done"] @ startQ
+                    let c',m' = analyze.Assessments
                     match analyze.Data with
                     | Some data ->
                         let status = parseSslLabsError data.Status
+                        stdoutL Trace <| consoleN "%O Poll Data for '%s' (Available: %i/%i) (HttpStatus:%i) (Status:%A)" DateTime.Now host c' m' analyze.Status status
                         match status with
-                            | Error -> 
-                                  let statusMessage = data.JsonValue.Item("statusMessage").ToString()
-                                  failwithf "Error Analyzing %s - %s" host statusMessage
                             | Ready ->
                                 yield data
+                            | SslLabsError.Error -> 
+                                let statusMessage = data.JsonValue.Item("statusMessage").ToString()
+                                failwithf "Error Analyzing %s - %s" host statusMessage
                             | Dns -> 
                                 do! Async.sleepTimeSpan prePolling
                                 yield! pollUntilData [] 0 host
@@ -296,6 +338,7 @@ let sslLabs (config: SslLabConfig) =
                                 do! Async.sleepTimeSpan inProgPolling
                                 yield! pollUntilData [] 0 host
                     | None ->
+                        stdoutL Trace <| consoleN "%O Poll Data for '%s' (Available: %i/%i) (HttpStatus:%i)" DateTime.Now host c' m' analyze.Status
                         match analyze.Status with
                         | HttpStatusCodes.TooManyRequests ->
                             yield! pollUntilData startQ i host
@@ -304,7 +347,7 @@ let sslLabs (config: SslLabConfig) =
                             //Write out Immediately
                             delay 
                                 |> consoleNN "Service Unavailable trying again for '%s' in %O." host
-                                |> stdout
+                                |> stdoutL Info
                             do! Async.sleepTimeSpan delay
                             yield! pollUntilData startQ i host
                         | 529 (* overloaded *)  -> 
@@ -312,7 +355,7 @@ let sslLabs (config: SslLabConfig) =
                             //Write out Immediately
                             delay
                                 |> consoleNN "Service Overloaded trying again for '%s' in %O." host
-                                |> stdout 
+                                |> stdoutL Info
                             do! Async.sleepTimeSpan delay
                             yield! pollUntilData startQ i host
                         | x -> failWithHttpStatus x
@@ -372,12 +415,12 @@ let sslLabs (config: SslLabConfig) =
                 |> AsyncSeq.map parallelProcessHost
                 |> AsyncSeq.mapAsyncParallelUnordered AsyncSeq.toListAsync
                 |> AsyncSeq.indexed
-                |> AsyncSeq.map (fun (i, tail) -> (consoleN "-- %d of %i --- %O --" (i+1L) totalHosts (DateTime.UtcNow - startTime)) :: tail )
+                |> AsyncSeq.map (fun (i, tail) -> (infoF <| consoleN "-- %d of %i --- %O --" (i+1L) totalHosts (DateTime.UtcNow - startTime)) :: tail )
                 |> AsyncSeq.collect AsyncSeq.ofSeq
-                |> AsyncSeq.map stdoutOrStatus //Write out to console
+                |> AsyncSeq.choose stdoutOrStatus //Write out to console
                 |> AsyncSeq.fold (|||) ErrorStatus.Okay
 
-            stdout <| consoleN "Completed: %O" DateTime.Now
+            stdoutL Info <| consoleN "Completed: %O" DateTime.Now
             //Final Error Summary
             if es = ErrorStatus.Okay then
                 stdout <| consoleN "All Clear%s." (emoji " 😃")

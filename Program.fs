@@ -48,6 +48,13 @@ let main argv =
                                     CommandOptionType.SingleValue)
                          .Accepts(validator(fun x-> x.ExistingFile()))
 
+    let optVerbose = app.Option<string>("--verbosity <LEVEL>", 
+                         "Level of data written to the console (error,info,debug,trace) [default: info]", 
+                         CommandOptionType.SingleValue)
+                         .Accepts(validator(fun x-> x.Values(true,"error","info","debug","trace")))
+    let optAPI = app.Option<string>("--api <API>", 
+                       "Alternative API endpoint (ie. preproduction: https://api.dev.ssllabs.com/api/v3/)", 
+                       CommandOptionType.SingleValue)
     let optEmoji = app.Option<bool>("--emoji", 
                                     "Show emoji when outputing to console", 
                                     CommandOptionType.NoValue)
@@ -75,6 +82,8 @@ let main argv =
                     VersionOnly = optVersion.HasValue()
                     Hosts = hosts.Values
                     HostFile = optHostFile |> OptionToOption
+                    Verbosity = optVerbose |> OptionToOption
+                    API = optAPI |> OptionToOption
                 }
             |> Async.RunSynchronously
         )
