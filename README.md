@@ -10,7 +10,7 @@ sending assessment requests to remote SSL Labs servers and that information will
 
 ## Requirements
 
-[.net Core v2.1](https://dotnet.microsoft.com/download/dotnet-core)
+[.net Core v2.1 on Windows, Mac, or Linux](https://dotnet.microsoft.com/download/dotnet-core)
 
 ## Install
 
