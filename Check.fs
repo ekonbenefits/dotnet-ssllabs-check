@@ -389,6 +389,7 @@ let sslLabs (config: SslLabConfig) =
                         |> Seq.choose (function|AddStatus e->Some e|_->None)
                         |> Seq.fold (|||) ErrorStatus.Okay
                     let hostLevel = levelForErrorStatus hostEs
+                    //this intentionally supresses exit status for warning level status if verbosity=Error
                     yield! hostResults |> Seq.map (verboseFilter hostLevel) |> AsyncSeq.ofSeq
                     //Error Summary
                     if hostEs <> ErrorStatus.Okay then
