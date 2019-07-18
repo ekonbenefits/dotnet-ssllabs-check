@@ -8,6 +8,9 @@ Tool that will check ssllabs score api and cert expiration when provided a list 
 This is an Unofficial tool, using the [SSL Labs API v3](https://github.com/ssllabs/ssllabs-scan/blob/master/ssllabs-api-docs-v3.md). See the SSL Labs [terms of use](https://www.ssllabs.com/about/terms.html). This tool works by
 sending assessment requests to remote SSL Labs servers and that information will be shared with SSL Labs.
 
+## Requirements
+
+[.net Core v2.1](https://dotnet.microsoft.com/download/dotnet-core)
 
 ## Install
 
