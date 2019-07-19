@@ -412,7 +412,7 @@ let sslLabs (config: SslLabConfig) =
                          |> Seq.fold (|||) ErrorStatus.Okay
 
                     let mark = match hostEs with | ErrorStatus.Okay -> emoji "✔" 
-                                                 | x when x < ErrorStatus.GradeB -> emoji "⚠️"
+                                                 | x when x <= ErrorStatus.GradeB -> emoji "⚠️"
                                                  | _ -> emoji "❌"
 
                     let hostLevel = levelForErrorStatus hostEs
