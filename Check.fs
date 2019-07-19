@@ -149,7 +149,7 @@ let checkAllowedNewAssessment () =
     if max <= 0 then
         failwithf "Service is not allowing you to request new assessments (%i, %i). " curr max
     else
-        curr < max, curr, max
+        {| Allowed = curr < max; Current = curr; Max = max|}
 
 // HTTP Request Code
 let assmVer = System.Reflection.Assembly.GetEntryAssembly().GetName().Version
@@ -329,19 +329,18 @@ let sslLabs (config: SslLabConfig) =
                 let newAssess = startQ |> Seq.isEmpty |> not
                 if newAssess then
                     do! Async.Sleep <| newCoolOff * i
-                let allowed,c,m =checkAllowedNewAssessment () 
-               
-                if newAssess && not allowed then
+                let check = checkAllowedNewAssessment ()
+                if newAssess && not check.Allowed then
                     stdoutL Trace
                         <| consoleN "%O Waiting For Assesment Slot '%s'#%i (Available: %i/%i)"
-                               DateTime.Now host i c m
+                               DateTime.Now host i check.Current check.Max
                     do! Async.sleepTimeSpan inProgPolling
                     yield! pollUntilData startQ i host
                 else 
                     if newAssess then
                         stdoutL Debug
                             <| consoleN "%O Attempt New Assesment '%s'#%i (Available: %i/%i)"
-                                DateTime.Now host i c m
+                                DateTime.Now host i check.Current check.Max
                     let! analyze = requestQ' SslLabsHost.Parse "/analyze" <| ["host", host; "all", "done"] @ startQ
                     let c',m' = analyze.Assessments
                     match analyze.Data with
@@ -349,7 +348,7 @@ let sslLabs (config: SslLabConfig) =
                         if newAssess then
                             stdoutL Debug
                                 <| consoleN "%O Started New Assesment '%s'#%i (Available: %i/%i)"
-                                    DateTime.Now host i c m
+                                    DateTime.Now host i check.Current check.Max
                         let status = parseSslLabsError data.Status
                         stdoutL Trace
                             <| consoleN "%O Poll Data for '%s' (Available: %i/%i) (HttpStatus:%i) (Status:%A)"
@@ -454,8 +453,10 @@ let sslLabs (config: SslLabConfig) =
                 |> AsyncSeq.mapAsyncParallelUnordered AsyncSeq.toListAsync
                 |> AsyncSeq.indexed
                 |> AsyncSeq.map (
-                    fun (i, tail) -> (levelFilter Progress
-                        <| consoleN "-- %d of %i --- %O --" (i+1L) totalHosts (DateTime.UtcNow - startTime)) :: tail
+                    fun (i, tail) ->
+                            (levelFilter Progress
+                                <| consoleN "-- %d of %i --- %O --" (i+1L) totalHosts (DateTime.UtcNow - startTime)
+                            ) :: tail
                     )
                 |> AsyncSeq.collect AsyncSeq.ofSeq
                 |> AsyncSeq.choose stdoutOrStatus //Write out to console
