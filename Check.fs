@@ -223,7 +223,6 @@ let hostJsonProcessor (data: SslLabsHost.Root option) =
                     ErrorStatus.Expiring, ConsoleColor.DarkYellow, "Expires"
                 else
                     ErrorStatus.Okay, ConsoleColor.DarkGreen, "Expires"
-                               
             yield console "    %s: " label
             let expiration = expireSpan.Days;
             if expiration > 0 then
@@ -301,7 +300,6 @@ let sslLabs (config: SslLabConfig) =
                 stdout <| consoleNN "%s - Unofficial Client - service unavailable" userAgent
                 failWithHttpStatus info.Status
         updateAssessmentReq cur1st max1st
-
         //get host from arguments or file
         let! hosts = option {
                         let! hostFile = config.HostFile
@@ -310,7 +308,6 @@ let sslLabs (config: SslLabConfig) =
                             return contents |> Array.toSeq |> Seq.filter (not << String.startsWith "#")
                         }
                      } |?-> lazy (async { return config.Hosts })
-
         if config.API |> Option.isSome then
             stdoutL Info  <| consoleNN "API: %s" baseUrl
         guard {
@@ -328,7 +325,6 @@ let sslLabs (config: SslLabConfig) =
             stdout  <| consoleN ""
             //If output directory specified, write out json data.
             do! writeJsonOutput (info.Data |> toIJsonDocOption) "info"
-
             //polling data for a single host
             let rec pollUntilData (state:{|StartQ:(string*string) list; Index:int; Host:string|}) =
                 asyncSeq {
@@ -398,7 +394,6 @@ let sslLabs (config: SslLabConfig) =
                                 yield! pollUntilData state
                             | x -> failWithHttpStatus x
             }
-
             //processHost -- indexed for bulk offset
             let parallelProcessHost (i, host)  = asyncSeq {
                 try 
@@ -468,7 +463,6 @@ let sslLabs (config: SslLabConfig) =
                 |> AsyncSeq.collect AsyncSeq.ofSeq
                 |> AsyncSeq.choose stdoutOrStatus //Write out to console
                 |> AsyncSeq.fold (|||) ErrorStatus.Okay
-
             stdoutL Progress <| consoleN "Completed: %O" DateTime.Now
             //Final Error Summary
             if es = ErrorStatus.Okay then
