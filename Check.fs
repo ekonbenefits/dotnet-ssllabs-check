@@ -268,8 +268,7 @@ let sslLabs (config: SslLabConfig) =
 
     //setup some level functions
     let verboseLevel = defaultArg (config.Verbosity |> Option.map parseConsoleError) Progress
-    let verboseFilter level result = if level <= verboseLevel then result else NoOp
-    let progressF = verboseFilter Progress
+    let levelFilter level result = if level <= verboseLevel then result else NoOp
     let stdout = stdoutBy (Trace,Trace) //Always Print
     let stdoutL level = stdoutBy (verboseLevel, level)
     let stdoutOrStatus = stdoutOrStatusBy (Trace,Trace) //Always Print
@@ -281,6 +280,7 @@ let sslLabs (config: SslLabConfig) =
                 let! outDir = config.OptOutputDir
                 Directory.CreateDirectory outDir |> ignore
                 let outPath = Path.Combine(outDir, sprintf "%s.json" identifier)
+                stdoutL Trace <| consoleN "%O Writing out json data to %s" DateTime.Now outPath
                 return File.WriteAllTextAsync(outPath, data.JsonValue.ToString()) |> Async.AwaitTask
         } |?-> asyncNoOp
 
@@ -291,7 +291,8 @@ let sslLabs (config: SslLabConfig) =
         let newCoolOff, cur1st, max1st =
             match info.Data with
             | Some i ->
-                stdout <| consoleNN "%s - Unofficial Client - (engine:%s) (criteria:%s)" userAgent i.EngineVersion i.CriteriaVersion
+                stdout <| consoleNN "%s - Unofficial Client - (engine:%s) (criteria:%s)"
+                              userAgent i.EngineVersion i.CriteriaVersion
                 for m in i.Messages do
                     stdout <| consoleNN "%s" m
                 i.NewAssessmentCoolOff,i.CurrentAssessments,i.MaxAssessments
@@ -316,10 +317,10 @@ let sslLabs (config: SslLabConfig) =
             return int ErrorStatus.Okay
         else
             stdoutL Progress <| consoleNN "Started: %O" DateTime.Now
-            stdoutL Info  <| consoleN "Hostnames to Check:"
+            stdout  <| consoleN "Hostnames to Check:"
             for host in hosts do
-                stdoutL Info  <| consoleN " %s" host
-            stdoutL Info  <| consoleN ""
+                stdout <| consoleN " %s" host
+            stdout  <| consoleN ""
             //If output directory specified, write out json data.
             do! writeJsonOutput (info.Data |> toIJsonDocOption) "info"
 
@@ -331,20 +332,28 @@ let sslLabs (config: SslLabConfig) =
                 let allowed,c,m =checkAllowedNewAssessment () 
                
                 if newAssess && not allowed then
-                    stdoutL Trace <| consoleN "%O Waiting For Assesment Slot '%s'#%i (Available: %i/%i)" DateTime.Now host i c m
+                    stdoutL Trace
+                        <| consoleN "%O Waiting For Assesment Slot '%s'#%i (Available: %i/%i)"
+                               DateTime.Now host i c m
                     do! Async.sleepTimeSpan inProgPolling
                     yield! pollUntilData startQ i host
                 else 
                     if newAssess then
-                        stdoutL Debug <| consoleN "%O Attempt New Assesment '%s'#%i (Available: %i/%i)" DateTime.Now host i c m
+                        stdoutL Debug
+                            <| consoleN "%O Attempt New Assesment '%s'#%i (Available: %i/%i)"
+                                DateTime.Now host i c m
                     let! analyze = requestQ' SslLabsHost.Parse "/analyze" <| ["host", host; "all", "done"] @ startQ
                     let c',m' = analyze.Assessments
                     match analyze.Data with
                     | Some data ->
                         if newAssess then
-                            stdoutL Debug <| consoleN "%O Started New Assesment '%s'#%i (Available: %i/%i)" DateTime.Now host i c m
+                            stdoutL Debug
+                                <| consoleN "%O Started New Assesment '%s'#%i (Available: %i/%i)"
+                                    DateTime.Now host i c m
                         let status = parseSslLabsError data.Status
-                        stdoutL Trace <| consoleN "%O Poll Data for '%s' (Available: %i/%i) (HttpStatus:%i) (Status:%A)" DateTime.Now host c' m' analyze.Status status
+                        stdoutL Trace
+                            <| consoleN "%O Poll Data for '%s' (Available: %i/%i) (HttpStatus:%i) (Status:%A)"
+                                DateTime.Now host c' m' analyze.Status status
                         match status with
                             | Ready ->
                                 yield data
@@ -359,10 +368,13 @@ let sslLabs (config: SslLabConfig) =
                                 yield! pollUntilData [] 0 host
                     | None ->
                         let reqType = if newAssess then "start" else "poll"
-                        stdoutL Debug <| consoleN "%O Request (%s) Failed for '%s' (Available: %i/%i) (HttpStatus:%i) (ClientMax?:%A)" DateTime.Now reqType host c' m' analyze.Status analyze.ClientMax
+                        stdoutL Debug
+                            <| consoleN "%O Request (%s) Failed for '%s' (Available: %i/%i) (HttpStatus:%i) (ClientMax?:%A)"
+                                   DateTime.Now reqType host c' m' analyze.Status analyze.ClientMax
                         match analyze.Status with
                         | HttpStatusCodes.TooManyRequests ->
-                            do! Async.sleepTimeSpan <| serviceUnavailablePolling ()  //Random slow down if we are getting 429, seems to happen sometimes even with new assesment slots
+                            //Random slow down if we are getting 429, seems to happen sometimes even with new assesment slots
+                            do! Async.sleepTimeSpan <| serviceUnavailablePolling ()  
                             yield! pollUntilData startQ i host
                         | HttpStatusCodes.ServiceUnavailable  -> 
                             let delay = serviceUnavailablePolling ()
@@ -394,20 +406,24 @@ let sslLabs (config: SslLabConfig) =
                     do! writeJsonOutput (data |> toIJsonDocOption) host
                     //Process host results
                     let hostResults = data |> hostJsonProcessor
-                    yield consoleN "%s: " host
                     let hostEs = 
                         hostResults
                         |> Seq.choose (function|AddStatus e->Some e|_->None)
                         |> Seq.fold (|||) ErrorStatus.Okay
                     let hostLevel = levelForErrorStatus hostEs
+                    yield levelFilter hostLevel
+                          <| consoleN "%s: " host
                     //this intentionally supresses exit status for warning level status if verbosity=Error
-                    yield! hostResults |> Seq.map (verboseFilter hostLevel) |> AsyncSeq.ofSeq
+                    yield! hostResults |> Seq.map (levelFilter hostLevel) |> AsyncSeq.ofSeq
                     //Error Summary
                     if hostEs <> ErrorStatus.Okay then
-                        yield consoleN "  Has Error(s): %A" hostEs
+                        yield levelFilter hostLevel
+                              <| consoleN "  Has Error(s): %A" hostEs
                     //SSL Labs link
-                    yield consoleN "  Details:"
-                    yield consoleColorNN ConsoleColor.Blue "    %s?d=%s" appUrl host
+                    yield levelFilter hostLevel
+                          <| consoleN "  Details:"
+                    yield levelFilter hostLevel
+                          <| consoleColorNN ConsoleColor.Blue "    %s?d=%s" appUrl host
                 with ex -> 
                     yield consoleN "%s (Unexpected Error):" host
                     yield consoleN "  Has Error(s): %A" ErrorStatus.ExceptionThrown
@@ -439,7 +455,10 @@ let sslLabs (config: SslLabConfig) =
                 |> AsyncSeq.map parallelProcessHost
                 |> AsyncSeq.mapAsyncParallelUnordered AsyncSeq.toListAsync
                 |> AsyncSeq.indexed
-                |> AsyncSeq.map (fun (i, tail) -> (progressF <| consoleN "-- %d of %i --- %O --" (i+1L) totalHosts (DateTime.UtcNow - startTime)) :: tail )
+                |> AsyncSeq.map (
+                    fun (i, tail) -> (levelFilter Progress
+                        <| consoleN "-- %d of %i --- %O --" (i+1L) totalHosts (DateTime.UtcNow - startTime)) :: tail
+                    )
                 |> AsyncSeq.collect AsyncSeq.ofSeq
                 |> AsyncSeq.choose stdoutOrStatus //Write out to console
                 |> AsyncSeq.fold (|||) ErrorStatus.Okay
