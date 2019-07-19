@@ -35,6 +35,8 @@ Options:
   -v|--version             Show version and service information
   -o|--output <DIRECTORY>  Output directory for json data [Default: does not write out data]
   --hostfile <PATH>        Retreive list of hostnames from file to check (one host per line, # preceding comments)
+  --verbosity <LEVEL>      Level of data written to the console (error,warn,info,progress,debug,trace) [default: progress]
+  --api <API>              Alternative API endpoint (ie. preproduction: https://api.dev.ssllabs.com/api/v3/)
   --emoji                  Show emoji when outputing to console
 ```
 
