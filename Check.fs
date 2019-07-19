@@ -32,10 +32,14 @@ type ErrorStatus = Okay = 0
                    | Expiring = 1 
                    | GradeB = 2 
                    | CertIssue = 4 
-                   | NotGradeAOrB = 8 
-                   | Expired = 16 
-                   | ExceptionThrown = 32
-[<Flags>]
+                   | JsonPathWarn = 8
+                   // Gap to add More Warnings in the future
+                   | Warn = 512 // Warn is < Warn
+                   | Error = 1024 // Error is > Error
+                   | NotGradeAOrB = 2048 
+                   | Expired = 4096 
+                   | ExceptionThrown = 8192
+                   | JsonPathError = 16384
 type CertIssue = Okay = 0
                  | NoChainOfTrust = 1
                  | NotBeforeDate =2
@@ -59,8 +63,8 @@ type ConsoleLevel =
     | Progress
     | Debug
     | Trace
-
 type IJsonDocument = FSharp.Data.Runtime.BaseTypes.IJsonDocument
+let jsonPathRegex = "^#(?<level>error|warn|info|progress|debug|trace)#(?<jsonpath>.+)$"
 let parseSslLabsError = 
     function | "READY" -> Ready 
              | "DNS" -> Dns 
@@ -74,10 +78,16 @@ let parseConsoleError =
              | "debug" -> Debug
              | "progress" -> Progress 
              | _ -> Info
+let parseJsonPath str =
+    let m = System.Text.RegularExpressions.Regex(jsonPathRegex).Match(str)
+    if m.Success then
+        Some  {|Level = parseConsoleError m.Groups.["level"].Value; Query = m.Groups.["jsonpath"].Value|}
+    else
+        None
 let levelForErrorStatus errorStatus =
     if errorStatus = ErrorStatus.Okay then
         Info
-    elif errorStatus <= ErrorStatus.GradeB then
+    elif errorStatus <= ErrorStatus.Warn then
         Warn
     else
         Error
@@ -180,9 +190,10 @@ let requestQ baseUrl parseF api q = async{
         return parseReq parseF resp
     }
 let failWithHttpStatus status = failwithf "Service Returned HTTP Status %i" status
-let hostJsonProcessor (data: SslLabsHost.Root option) =  
+let hostJsonProcessor (queries:{|Level:ConsoleLevel; Query:string|} seq) (data: SslLabsHost.Root option)  =  
     chooseSeq {
         let! data' = data
+
         //Process Certs to find leafs
         let certMap = 
             data'.Certs
@@ -242,16 +253,43 @@ let hostJsonProcessor (data: SslLabsHost.Root option) =
             yield console "    Grade: "
             yield consoleColorN color "%s" ep.Grade
             yield AddStatus status
-    }
+        //Add JsonPath Queries to output if any
+        if queries |> Seq.isEmpty |> not  then
+            let newtonJson = Newtonsoft.Json.Linq.JObject.Parse (data'.JsonValue.ToString())
+            let queryResults =
+                chooseSeq {
+                    for q in queries do
+                        let status, color = 
+                            match q.Level with
+                            | Warn ->
+                                ErrorStatus.JsonPathWarn, ConsoleColor.DarkYellow
+                            | ConsoleLevel.Error ->
+                                ErrorStatus.JsonPathError, ConsoleColor.DarkRed
+                            | _ -> 
+                                ErrorStatus.Okay, originalColor
+                
+                        let! result = newtonJson.SelectToken(q.Query)
+                        yield! seq {
+                            yield Some <| consoleN "    '%s':" q.Query
+                            yield Some <| consoleColorN color "      %O" result
+                            yield Some <| AddStatus status
+                        }
+                }
+            if queryResults |> Seq.isEmpty |> not then
+                yield console "  Queried Data:"
+                for qr in queryResults do
+                    yield qr
+        }
 //Check host list against SSLLabs.com
 type SslLabConfig = { 
-                        OptOutputDir: string option
-                        Emoji:        bool
-                        VersionOnly:  bool
-                        Hosts:        string seq
-                        HostFile:     string option
-                        Verbosity:    string option
-                        API:          string option
+                        OptOutputDir:  string option
+                        Emoji:         bool
+                        VersionOnly:   bool
+                        Hosts:         string seq
+                        HostFile:      string option
+                        Verbosity:     string option
+                        API:           string option
+                        JsonPaths:      string list
                     }
 let sslLabs (config: SslLabConfig) =
     //Configure if showing emoji
@@ -272,6 +310,8 @@ let sslLabs (config: SslLabConfig) =
     let stdout = stdoutBy (Trace,Trace) //Always Print
     let stdoutL level = stdoutBy (verboseLevel, level)
     let stdoutOrStatus = stdoutOrStatusBy (Trace,Trace) //Always Print
+
+    let jsonPathQueyies = config.JsonPaths |> Seq.choose parseJsonPath |> Seq.filter (fun jp -> jp.Level <= verboseLevel)
 
     let writeJsonOutput (fData:IJsonDocument option) identifier =
         let asyncNoOp = lazy Async.Sleep 0
@@ -405,14 +445,14 @@ let sslLabs (config: SslLabConfig) =
                     //If output directory specified, write out json data.
                     do! writeJsonOutput (data |> toIJsonDocOption) host
                     //Process host results
-                    let hostResults = data |> hostJsonProcessor
+                    let hostResults = data |> hostJsonProcessor jsonPathQueyies
                     let hostEs = 
                          hostResults
                          |> Seq.choose (function|AddStatus e->Some e|_->None)
                          |> Seq.fold (|||) ErrorStatus.Okay
 
                     let mark = match hostEs with | ErrorStatus.Okay -> emoji "✔" 
-                                                 | x when x <= ErrorStatus.GradeB -> emoji "⚠️"
+                                                 | x when x < ErrorStatus.Warn -> emoji "⚠️"
                                                  | _ -> emoji "❌"
 
                     let hostLevel = levelForErrorStatus hostEs
@@ -477,6 +517,6 @@ let sslLabs (config: SslLabConfig) =
             else
                 let scream = emoji " 😱"
                 let frown = emoji " 😦"
-                stdout <| consoleN "Found Error(s)%s: %A" (if es <= ErrorStatus.GradeB then frown else scream) es
+                stdout <| consoleN "Found Error(s)%s: %A" (if es < ErrorStatus.Warn then frown else scream) es
             return int es
     }

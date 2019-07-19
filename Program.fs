@@ -24,6 +24,12 @@ let OptionToOption (opt:CommandOption<'T>) =
     else
         None
 
+let OptionToList (opt:CommandOption<'T>) =
+    if opt.HasValue() then
+        opt.ParsedValues |> List.ofSeq
+    else
+        List.empty
+
 let validator (f:Validation.IOptionValidationBuilder<_>->'b) : Validation.IOptionValidationBuilder<_> -> unit =
     fun x -> f x |> ignore
 
@@ -57,6 +63,8 @@ let main argv =
     let optEmoji = app.Option<bool>("--emoji", 
                                     "Show emoji when outputing to console", 
                                     CommandOptionType.NoValue)
+    let optJsonPath= app.Option<string>("--jsonpath <QUERY>",  "<QUERY> should start with #level# before JSONPath. If query finds anything flagged at leeel.", CommandOptionType.MultipleValue)
+                          .Accepts(validator(fun x->x.RegularExpression(Check.jsonPathRegex,"Should be in the form of '#level#jsonpath'")))
     
     let hosts = app.Argument<string>("hostname(s)", "Hostnames to check SSL Grades and Validity", multipleValues=true)   
   
@@ -83,6 +91,7 @@ let main argv =
                     HostFile = optHostFile |> OptionToOption
                     Verbosity = optVerbose |> OptionToOption
                     API = optAPI |> OptionToOption
+                    JsonPaths = optJsonPath |> OptionToList
                 }
             |> Async.RunSynchronously
         )
