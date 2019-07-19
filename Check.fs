@@ -410,9 +410,14 @@ let sslLabs (config: SslLabConfig) =
                          hostResults
                          |> Seq.choose (function|AddStatus e->Some e|_->None)
                          |> Seq.fold (|||) ErrorStatus.Okay
+
+                    let mark = match hostEs with | ErrorStatus.Okay -> emoji "✔" 
+                                                 | x when x < ErrorStatus.GradeB -> emoji "⚠️"
+                                                 | _ -> emoji "❌"
+
                     let hostLevel = levelForErrorStatus hostEs
                     yield levelFilter hostLevel
-                           <| consoleN "%s: " host
+                           <| consoleN "%s%s: " host mark
                     //this intentionally supresses exit status for warning level status if verbosity=Error
                     yield! hostResults |> Seq.map (levelFilter hostLevel) |> AsyncSeq.ofSeq
                     //Error Summary
@@ -425,6 +430,7 @@ let sslLabs (config: SslLabConfig) =
                     yield levelFilter hostLevel
                            <| consoleColorNN ConsoleColor.Blue "    %s?d=%s" appUrl host
                 with ex -> 
+                    yield consoleN "%s❌: " host
                     yield consoleN "%s (Unexpected Error):" host
                     yield consoleN "  Has Error(s): %A" ErrorStatus.ExceptionThrown
                     yield consoleN "--------------"
