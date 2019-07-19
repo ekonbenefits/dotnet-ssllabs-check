@@ -166,7 +166,8 @@ let private parseReq parseF resp =
         {|
             Data = option { if resp.StatusCode = HttpStatusCodes.OK then return parseF text}
             Status = resp.StatusCode
-            Assessments = (curr, max)
+            Current = curr
+            Max = max
             ClientMax = maxClient
         |}
     | _ -> failwith "Request did not return text";
@@ -325,120 +326,122 @@ let sslLabs (config: SslLabConfig) =
             do! writeJsonOutput (info.Data |> toIJsonDocOption) "info"
 
             //polling data for a single host
-            let rec pollUntilData startQ i host= asyncSeq {
-                let newAssess = startQ |> Seq.isEmpty |> not
-                if newAssess then
-                    do! Async.Sleep <| newCoolOff * i
-                let check = checkAllowedNewAssessment ()
-                if newAssess && not check.Allowed then
-                    stdoutL Trace
-                        <| consoleN "%O Waiting For Assesment Slot '%s'#%i (Available: %i/%i)"
-                               DateTime.Now host i check.Current check.Max
-                    do! Async.sleepTimeSpan inProgPolling
-                    yield! pollUntilData startQ i host
-                else 
+            let rec pollUntilData (state:{|StartQ:(string*string) list; Index:int; Host:string|}) =
+                asyncSeq {
+                    let newAssess = state.StartQ |> List.isEmpty |> not
                     if newAssess then
-                        stdoutL Debug
-                            <| consoleN "%O Attempt New Assesment '%s'#%i (Available: %i/%i)"
-                                DateTime.Now host i check.Current check.Max
-                    let! analyze = requestQ' SslLabsHost.Parse "/analyze" <| ["host", host; "all", "done"] @ startQ
-                    let c',m' = analyze.Assessments
-                    match analyze.Data with
-                    | Some data ->
+                        do! Async.Sleep <| newCoolOff * state.Index
+                    let check = checkAllowedNewAssessment ()
+                    if newAssess && not check.Allowed then
+                        stdoutL Trace
+                            <| consoleN "%O Waiting For Assesment Slot '%s'#%i (Available: %i/%i)"
+                                   DateTime.Now state.Host state.Index check.Current check.Max
+                        do! Async.sleepTimeSpan inProgPolling
+                        yield! pollUntilData state
+                    else 
                         if newAssess then
                             stdoutL Debug
-                                <| consoleN "%O Started New Assesment '%s'#%i (Available: %i/%i)"
-                                    DateTime.Now host i check.Current check.Max
-                        let status = parseSslLabsError data.Status
-                        stdoutL Trace
-                            <| consoleN "%O Poll Data for '%s' (Available: %i/%i) (HttpStatus:%i) (Status:%A)"
-                                DateTime.Now host c' m' analyze.Status status
-                        match status with
-                            | Ready ->
-                                yield data
-                            | SslLabsError.Error -> 
-                                let statusMessage = data.JsonValue.Item("statusMessage").ToString()
-                                failwithf "Error Analyzing %s - %s" host statusMessage
-                            | Dns -> 
-                                do! Async.sleepTimeSpan prePolling
-                                yield! pollUntilData [] 0 host
-                            | InProgress ->
-                                do! Async.sleepTimeSpan inProgPolling
-                                yield! pollUntilData [] 0 host
-                    | None ->
-                        let reqType = if newAssess then "start" else "poll"
-                        stdoutL Debug
-                            <| consoleN "%O Request (%s) Failed for '%s' (Available: %i/%i) (HttpStatus:%i) (ClientMax?:%A)"
-                                   DateTime.Now reqType host c' m' analyze.Status analyze.ClientMax
-                        match analyze.Status with
-                        | HttpStatusCodes.TooManyRequests ->
-                            //Random slow down if we are getting 429, seems to happen sometimes even with new assesment slots
-                            do! Async.sleepTimeSpan <| serviceUnavailablePolling ()  
-                            yield! pollUntilData startQ i host
-                        | HttpStatusCodes.ServiceUnavailable  -> 
-                            let delay = serviceUnavailablePolling ()
-                            //Write out Immediately
-                            stdoutL Info 
-                                <| consoleNN "Service Unavailable trying again for '%s' in %O." host delay 
-                            do! Async.sleepTimeSpan delay
-                            yield! pollUntilData startQ i host
-                        | 529 (* overloaded *)  -> 
-                            let delay = serviceOverloadedPolling ()
-                            //Write out Immediately
-                            stdoutL Info
-                                <| consoleNN "Service Overloaded trying again for '%s' in %O." host delay
-                            do! Async.sleepTimeSpan delay
-                            yield! pollUntilData startQ i host
-                        | x -> failWithHttpStatus x
+                                <| consoleN "%O ATTEMPT New Req '%s'#%i (Reqs/Max: %i/%i)"
+                                    DateTime.Now state.Host state.Index check.Current check.Max
+                        let! analyze = requestQ' SslLabsHost.Parse "/analyze"
+                                            <| ["host", state.Host; "all", "done"] @ state.StartQ
+                        match analyze.Data with
+                        | Some data ->
+                            if newAssess then
+                                stdoutL Debug
+                                    <| consoleN "%O STARTED New Req '%s'#%i (Reqs/Max: %i/%i)"
+                                        DateTime.Now state.Host state.Index check.Current check.Max
+                            let status = parseSslLabsError data.Status
+                            stdoutL Trace
+                                <| consoleN "%O POLL for '%s' (Reqs/Max: %i/%i) (HttpStatus:%i) (Status:%A)"
+                                    DateTime.Now state.Host analyze.Current analyze.Max analyze.Status status
+                            let stateForPolling = {|state with StartQ = List.empty; Index = 0|}
+                            match status with
+                                | Ready ->
+                                    yield data
+                                | SslLabsError.Error -> 
+                                    let statusMessage = data.JsonValue.Item("statusMessage").ToString()
+                                    failwithf "Error Analyzing %s - %s" state.Host statusMessage
+                                | Dns -> 
+                                    do! Async.sleepTimeSpan prePolling
+                                    yield! pollUntilData stateForPolling
+                                | InProgress ->
+                                    do! Async.sleepTimeSpan inProgPolling
+                                    yield! pollUntilData stateForPolling
+                        | None ->
+                            let reqType = if newAssess then "start" else "poll"
+                            stdoutL Debug
+                                <| consoleN "%O Request (%s) FAILED for '%s' (Reqs/Max: %i/%i) (HttpStatus:%i) (ClientMax?:%A)"
+                                       DateTime.Now reqType state.Host analyze.Current analyze.Max analyze.Status analyze.ClientMax
+                            match analyze.Status with
+                            | HttpStatusCodes.TooManyRequests ->
+                                //Random slow down if we are getting 429, seems to happen sometimes even with new assesment slots
+                                do! Async.sleepTimeSpan <| serviceUnavailablePolling ()  
+                                yield! pollUntilData state
+                            | HttpStatusCodes.ServiceUnavailable  -> 
+                                let delay = serviceUnavailablePolling ()
+                                //Write out Immediately
+                                stdoutL Info 
+                                    <| consoleNN "Service Unavailable trying again for '%s' in %O." state.Host delay 
+                                do! Async.sleepTimeSpan delay
+                                yield! pollUntilData state
+                            | 529 (* overloaded *)  -> 
+                                let delay = serviceOverloadedPolling ()
+                                //Write out Immediately
+                                stdoutL Info
+                                    <| consoleNN "Service Overloaded trying again for '%s' in %O." state.Host delay
+                                do! Async.sleepTimeSpan delay
+                                yield! pollUntilData state
+                            | x -> failWithHttpStatus x
             }
 
             //processHost -- indexed for bulk offset
             let parallelProcessHost (i, host)  = asyncSeq {
                 try 
-                    
+                    let stateForRequesting = {|StartQ = ["startNew","on"]; Index = (i + 1); Host = host|}
                     let! data = 
-                        pollUntilData ["startNew","on"] (i + 1) host
-                        |> AsyncSeq.tryFirst
+                        pollUntilData stateForRequesting
+                            |> AsyncSeq.tryFirst
                     //If output directory specified, write out json data.
                     do! writeJsonOutput (data |> toIJsonDocOption) host
                     //Process host results
                     let hostResults = data |> hostJsonProcessor
                     let hostEs = 
-                        hostResults
-                        |> Seq.choose (function|AddStatus e->Some e|_->None)
-                        |> Seq.fold (|||) ErrorStatus.Okay
+                         hostResults
+                         |> Seq.choose (function|AddStatus e->Some e|_->None)
+                         |> Seq.fold (|||) ErrorStatus.Okay
                     let hostLevel = levelForErrorStatus hostEs
                     yield levelFilter hostLevel
-                          <| consoleN "%s: " host
+                           <| consoleN "%s: " host
                     //this intentionally supresses exit status for warning level status if verbosity=Error
                     yield! hostResults |> Seq.map (levelFilter hostLevel) |> AsyncSeq.ofSeq
                     //Error Summary
                     if hostEs <> ErrorStatus.Okay then
-                        yield levelFilter hostLevel
-                              <| consoleN "  Has Error(s): %A" hostEs
+                         yield levelFilter hostLevel
+                               <| consoleN "  Has Error(s): %A" hostEs
                     //SSL Labs link
                     yield levelFilter hostLevel
-                          <| consoleN "  Details:"
+                           <| consoleN "  Details:"
                     yield levelFilter hostLevel
-                          <| consoleColorNN ConsoleColor.Blue "    %s?d=%s" appUrl host
+                           <| consoleColorNN ConsoleColor.Blue "    %s?d=%s" appUrl host
                 with ex -> 
                     yield consoleN "%s (Unexpected Error):" host
                     yield consoleN "  Has Error(s): %A" ErrorStatus.ExceptionThrown
                     yield consoleN "--------------"
                     let rec printExn : exn -> ResultStream seq =
                         function
-                                 | null -> Seq.empty
-                                 | :? AggregateException as multiEx -> 
-                                        seq {
-                                            for ie in multiEx.Flatten().InnerExceptions do
-                                                yield! printExn ie
-                                        }
-                                 | singleEx -> 
-                                    seq {
-                                        yield consoleN "%s" singleEx.Message
-                                        yield consoleN "%s" singleEx.StackTrace
-                                        yield! printExn singleEx.InnerException
-                                    }
+                        | null -> Seq.empty
+                        | :? AggregateException as multiEx -> 
+                                 seq {
+                                     for ie in multiEx.Flatten().InnerExceptions do
+                                         yield! printExn ie
+                                 }
+                        | singleEx -> 
+                             seq {
+                                 yield consoleN "%s" singleEx.Message
+                                 yield consoleN "%s" singleEx.StackTrace
+                                 yield! printExn singleEx.InnerException
+                             }
                     yield! AsyncSeq.ofSeq <| printExn ex
                     yield consoleNN "--------------"
                     yield AddStatus ErrorStatus.ExceptionThrown
