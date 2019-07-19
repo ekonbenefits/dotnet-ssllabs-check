@@ -313,6 +313,10 @@ let sslLabs (config: SslLabConfig) =
 
         if config.API |> Option.isSome then
             stdoutL Info  <| consoleNN "API: %s" baseUrl
+        guard {
+            let! outDir = config.OptOutputDir
+            stdoutL Info  <| consoleNN "JSON Output Directory: %s" outDir
+        }
         if config.VersionOnly then
             stdoutL Info  <| consoleNN "Assessments Available %i of %i" cur1st max1st
             return int ErrorStatus.Okay
