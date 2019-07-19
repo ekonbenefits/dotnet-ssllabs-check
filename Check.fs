@@ -280,6 +280,7 @@ let sslLabs (config: SslLabConfig) =
                 let! outDir = config.OptOutputDir
                 Directory.CreateDirectory outDir |> ignore
                 let outPath = Path.Combine(outDir, sprintf "%s.json" identifier)
+                                |> Path.GetFullPath
                 stdoutL Trace <| consoleN "%O Writing out json data to %s" DateTime.Now outPath
                 return File.WriteAllTextAsync(outPath, data.JsonValue.ToString()) |> Async.AwaitTask
         } |?-> asyncNoOp
@@ -312,7 +313,7 @@ let sslLabs (config: SslLabConfig) =
             stdoutL Info  <| consoleNN "API: %s" baseUrl
         guard {
             let! outDir = config.OptOutputDir
-            stdoutL Info  <| consoleNN "JSON Output Directory: %s" outDir
+            stdoutL Info  <| consoleNN "JSON Output Directory: %s" (outDir |> Path.GetFullPath)
         }
         if config.VersionOnly then
             stdoutL Info  <| consoleNN "Assessments Available %i of %i" cur1st max1st
