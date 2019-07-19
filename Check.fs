@@ -265,9 +265,8 @@ let hostJsonProcessor (queries:{|Level:ConsoleLevel; Query:string|} seq) (data: 
                                 ErrorStatus.JsonPathWarn, ConsoleColor.DarkYellow
                             | ConsoleLevel.Error ->
                                 ErrorStatus.JsonPathError, ConsoleColor.DarkRed
-                            | _ -> 
+                            | _ -> //any other levels don't effect error status, nor make sense colored
                                 ErrorStatus.Okay, originalColor
-                
                         let! result = newtonJson.SelectToken(q.Query)
                         yield! seq {
                             yield Some <| consoleN "    '%s':" q.Query
