@@ -41,7 +41,6 @@ let main argv =
     let optOutDir = app.Option<string>("-o|--output <DIRECTORY>", 
                                        "Output directory for json data [Default: does not write out data]",
                                        CommandOptionType.SingleValue)
-                       .Accepts(validator(fun x-> x.ExistingDirectory()))
 
     let optHostFile = app.Option<string>("--hostfile <PATH>", 
                                     "Retreive list of hostnames from file to check (one host per line, # preceding comments)", 
