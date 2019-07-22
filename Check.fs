@@ -268,16 +268,15 @@ let hostJsonProcessor (queries:{|Level:ConsoleLevel; Query:string|} seq) (data: 
                             | _ -> //any other levels don't effect error status, nor make sense colored
                                 ErrorStatus.Okay, originalColor
                         let! result = newtonJson.SelectToken(q.Query)
-                        yield! seq {
-                            yield Some <| consoleN "    '%s':" q.Query
-                            yield Some <| consoleColorN color "      %O" result
-                            yield Some <| AddStatus status
+                        yield! chooseSeq {
+                            yield consoleN "    '%s':" q.Query
+                            yield consoleColorN color "      %O" result
+                            yield AddStatus status
                         }
                 }
             if queryResults |> Seq.isEmpty |> not then
                 yield console "  Queried Data:"
-                for qr in queryResults do
-                    yield qr
+                yield! queryResults
         }
 //Check host list against SSLLabs.com
 type SslLabConfig = { 
