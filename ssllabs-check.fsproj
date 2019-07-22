@@ -24,6 +24,11 @@
     <Version>2.1.0</Version>
   </PropertyGroup>
 
+  <!-- Work around for annonymous records portable pdb bug in pre VS 16.2-->
+  <PropertyGroup Condition=" '$(Configuration)'=='Debug'">
+    <DebugType>Full</DebugType>
+  </PropertyGroup>
+
   <ItemGroup>
     <Content Include="samples\host.json" />
     <Content Include="samples\info.json" />
