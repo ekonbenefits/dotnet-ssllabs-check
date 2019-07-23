@@ -23,9 +23,8 @@ open FSharp.Interop.Compose.Linq
 open FSharp.Interop.Compose.System
 open FSharp.Interop.NullOptAble
 open FSharp.Interop.NullOptAble.Operators
-open DevLab.JmesPath
 open Console
-open Newtonsoft.Json.Linq
+open Json
 
 module Hdr = FSharp.Data.HttpRequestHeaders
 type Host = JsonProvider<"samples/host.json">
@@ -49,34 +48,13 @@ type Error =
     | InProgress
     | Error
 
-type IJsonDocument = FSharp.Data.Runtime.BaseTypes.IJsonDocument
 let parseSslLabsError = 
     function | "READY" -> Ready 
              | "DNS" -> Dns 
              | "IN_PROGRESS" -> InProgress 
              | _ -> Error
 
-let jmes = 
-    let jmes' = JmesPath()
-    jmes'.FunctionRepository
-         .Register<Console.Error>()
-         .Register<Console.Warn>()
-         .Register<Console.Info>()
-         .Register<Console.Progress>()
-         .Register<Console.Debug>()
-         .Register<Console.Trace>() |> ignore
-    jmes'
 
-module JToken = 
-    let isNullOrEmpty (token:JToken) =
-        (token = null) ||
-        (token.Type = JTokenType.Array && not token.HasValues) ||
-        (token.Type = JTokenType.Object && not token.HasValues) ||
-        (token.Type = JTokenType.String && token.ToString() = String.Empty) ||
-        (token.Type = JTokenType.Null)
-
-let toIJsonDocOption target : IJsonDocument option =
-    target |> Option.map (fun x-> upcast x)
 module Async =
     let sleepTimeSpan (time:TimeSpan) =
         Async.Sleep (int time.TotalMilliseconds)
@@ -212,7 +190,7 @@ let hostJsonProcessor (queries: string seq) (data: Host.Root option)  =
             let queryResults =
                 chooseSeq {
                     for q in queries do
-                        let! result = jmes.Transform(newtonJson, q) |> Option.ofObjWhenNot JToken.isNullOrEmpty
+                        let! result = newtonJson |> queryJmesPath q
                         let level = Console.getLevel result
                         let status, color = 
                             match level with
@@ -412,7 +390,7 @@ let check (config: Config) =
                     let hostResults = data |> hostJsonProcessor config.Queries
                     let hostEs = 
                          hostResults
-                         |> Seq.choose (function|AddStatus e->Some e|_->None)
+                         |> Seq.map extractStatus
                          |> Seq.fold (|||) Status.Okay
 
                     let mark = match hostEs with | Status.Okay -> emoji "✔" 

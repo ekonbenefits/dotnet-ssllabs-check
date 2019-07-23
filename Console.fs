@@ -81,6 +81,13 @@ let lockingWrite color (text:string) =
             Console.ForegroundColor <- originalColor
     )
 
+let rec extractStatus result =
+    match result with
+    | IncludedLevel (_, result') -> extractStatus result'
+    | AddStatus e -> e
+    | _ -> Status.Okay
+
+
 let rec stdoutOrStatusBy (write:ConsoleColor -> string -> unit) (by:{|Verbosity:Level; DefaultLevel:Level|} option) (result:ResultStream) =
     match result with
     | ConsoleColorText(s, color) ->
