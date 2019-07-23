@@ -23,6 +23,7 @@ open FSharp.Interop.Compose.Linq
 open FSharp.Interop.Compose.System
 open FSharp.Interop.NullOptAble
 open FSharp.Interop.NullOptAble.Operators
+open Console
 
 module Hdr = FSharp.Data.HttpRequestHeaders
 type SslLabsHost = JsonProvider<"samples/host.json">
@@ -56,13 +57,7 @@ type SslLabsError =
     | Dns
     | InProgress
     | Error
-type ConsoleLevel = 
-    Error
-    | Warn
-    | Info
-    | Progress
-    | Debug
-    | Trace
+
 type IJsonDocument = FSharp.Data.Runtime.BaseTypes.IJsonDocument
 let jsonPathRegex = "^#(?<level>error|warn|info|progress|debug|trace)#(?<jsonpath>.+)$"
 let parseSslLabsError = 
@@ -70,14 +65,7 @@ let parseSslLabsError =
              | "DNS" -> Dns 
              | "IN_PROGRESS" -> InProgress 
              | _ -> SslLabsError.Error
-let parseConsoleError = 
-    String.toLower >>
-    function | "error" -> ConsoleLevel.Error 
-             | "warn" -> Warn
-             | "trace" -> Trace 
-             | "debug" -> Debug
-             | "progress" -> Progress 
-             | _ -> Info
+
 let parseJsonPath str =
     let m = System.Text.RegularExpressions.Regex(jsonPathRegex).Match(str)
     if m.Success then
@@ -86,11 +74,11 @@ let parseJsonPath str =
         None
 let levelForErrorStatus errorStatus =
     if errorStatus = ErrorStatus.Okay then
-        Info
+        Level.Info
     elif errorStatus <= ErrorStatus.Warn then
-        Warn
+        Level.Warn
     else
-        Error
+        Level.Error
 let toIJsonDocOption target : IJsonDocument option =
     target |> Option.map (fun x-> upcast x)
 module Async =
@@ -190,7 +178,7 @@ let requestQ baseUrl parseF api q = async{
         return parseReq parseF resp
     }
 let failWithHttpStatus status = failwithf "Service Returned HTTP Status %i" status
-let hostJsonProcessor (queries:{|Level:ConsoleLevel; Query:string|} seq) (data: SslLabsHost.Root option)  =  
+let hostJsonProcessor (queries:{|Level:Console.Level; Query:string|} seq) (data: SslLabsHost.Root option)  =  
     chooseSeq {
         let! data' = data
 
@@ -261,9 +249,9 @@ let hostJsonProcessor (queries:{|Level:ConsoleLevel; Query:string|} seq) (data: 
                     for q in queries do
                         let status, color = 
                             match q.Level with
-                            | Warn ->
+                            | Level.Warn ->
                                 ErrorStatus.JsonPathWarn, ConsoleColor.DarkYellow
-                            | ConsoleLevel.Error ->
+                            | Level.Error ->
                                 ErrorStatus.JsonPathError, ConsoleColor.DarkRed
                             | _ -> //any other levels don't effect error status, nor make sense colored
                                 ErrorStatus.Okay, originalColor
@@ -303,11 +291,11 @@ let sslLabs (config: SslLabConfig) =
     let requestQ' = requestQ baseUrl
 
     //setup some level functions
-    let verboseLevel = defaultArg (config.Verbosity |> Option.map parseConsoleError) Progress
+    let verboseLevel = defaultArg (config.Verbosity |> Option.map parseConsoleError) Level.Progress
     let levelFilter level result = if level <= verboseLevel then result else NoOp
-    let stdout = stdoutBy (Trace,Trace) //Always Print
+    let stdout = stdoutBy (Level.Trace,Level.Trace) //Always Print
     let stdoutL level = stdoutBy (verboseLevel, level)
-    let stdoutOrStatus = stdoutOrStatusBy (Trace,Trace) //Always Print
+    let stdoutOrStatus = stdoutOrStatusBy (Level.Trace,Level.Trace) //Always Print
 
     let jsonPathQueyies = config.JsonPaths |> Seq.choose parseJsonPath |> Seq.filter (fun jp -> jp.Level <= verboseLevel)
 
@@ -319,7 +307,7 @@ let sslLabs (config: SslLabConfig) =
                 Directory.CreateDirectory outDir |> ignore
                 let outPath = Path.Combine(outDir, sprintf "%s.json" identifier)
                                 |> Path.GetFullPath
-                stdoutL Trace <| consoleN "%O Writing out json data to %s" DateTime.Now outPath
+                stdoutL Level.Trace <| consoleN "%O Writing out json data to %s" DateTime.Now outPath
                 return File.WriteAllTextAsync(outPath, data.JsonValue.ToString()) |> Async.AwaitTask
         } |?-> asyncNoOp
 
@@ -348,16 +336,16 @@ let sslLabs (config: SslLabConfig) =
                         }
                      } |?-> lazy (async { return config.Hosts })
         if config.API |> Option.isSome then
-            stdoutL Info  <| consoleNN "API: %s" baseUrl
+            stdoutL Level.Info  <| consoleNN "API: %s" baseUrl
         guard {
             let! outDir = config.OptOutputDir
-            stdoutL Info  <| consoleNN "JSON Output Directory: %s" (outDir |> Path.GetFullPath)
+            stdoutL Level.Info  <| consoleNN "JSON Output Directory: %s" (outDir |> Path.GetFullPath)
         }
         if config.VersionOnly then
-            stdoutL Info  <| consoleNN "Assessments Available %i of %i" cur1st max1st
+            stdoutL Level.Info  <| consoleNN "Assessments Available %i of %i" cur1st max1st
             return int ErrorStatus.Okay
         else
-            stdoutL Progress <| consoleNN "Started: %O" DateTime.Now
+            stdoutL Level.Progress <| consoleNN "Started: %O" DateTime.Now
             stdout  <| consoleN "Hostnames to Check:"
             for host in hosts do
                 stdout <| consoleN " %s" host
@@ -372,14 +360,14 @@ let sslLabs (config: SslLabConfig) =
                         do! Async.Sleep <| newCoolOff * state.Index
                     let check = checkAllowedNewAssessment ()
                     if newAssess && not check.Allowed then
-                        stdoutL Trace
+                        stdoutL Level.Trace
                             <| consoleN "%O Waiting For Assesment Slot '%s'#%i (Available: %i/%i)"
                                    DateTime.Now state.Host state.Index check.Current check.Max
                         do! Async.sleepTimeSpan inProgPolling
                         yield! pollUntilData state
                     else 
                         if newAssess then
-                            stdoutL Debug
+                            stdoutL Level.Debug
                                 <| consoleN "%O ATTEMPT New Req '%s'#%i (Reqs/Max: %i/%i)"
                                     DateTime.Now state.Host state.Index check.Current check.Max
                         let! analyze = requestQ' SslLabsHost.Parse "/analyze"
@@ -387,11 +375,11 @@ let sslLabs (config: SslLabConfig) =
                         match analyze.Data with
                         | Some data ->
                             if newAssess then
-                                stdoutL Debug
+                                stdoutL Level.Debug
                                     <| consoleN "%O STARTED New Req '%s'#%i (Reqs/Max: %i/%i)"
                                         DateTime.Now state.Host state.Index check.Current check.Max
                             let status = parseSslLabsError data.Status
-                            stdoutL Trace
+                            stdoutL Level.Trace
                                 <| consoleN "%O POLL for '%s' (Reqs/Max: %i/%i) (HttpStatus:%i) (Status:%A)"
                                     DateTime.Now state.Host analyze.Current analyze.Max analyze.Status status
                             let stateForPolling = {|state with StartQ = List.empty; Index = 0|}
@@ -409,7 +397,7 @@ let sslLabs (config: SslLabConfig) =
                                     yield! pollUntilData stateForPolling
                         | None ->
                             let reqType = if newAssess then "start" else "poll"
-                            stdoutL Debug
+                            stdoutL Level.Debug
                                 <| consoleN "%O Request (%s) FAILED for '%s' (Reqs/Max: %i/%i) (HttpStatus:%i) (ClientMax?:%A)"
                                        DateTime.Now reqType state.Host analyze.Current analyze.Max analyze.Status analyze.ClientMax
                             match analyze.Status with
@@ -420,14 +408,14 @@ let sslLabs (config: SslLabConfig) =
                             | HttpStatusCodes.ServiceUnavailable  -> 
                                 let delay = serviceUnavailablePolling ()
                                 //Write out Immediately
-                                stdoutL Info 
+                                stdoutL Level.Info 
                                     <| consoleNN "Service Unavailable trying again for '%s' in %O." state.Host delay 
                                 do! Async.sleepTimeSpan delay
                                 yield! pollUntilData state
                             | 529 (* overloaded *)  -> 
                                 let delay = serviceOverloadedPolling ()
                                 //Write out Immediately
-                                stdoutL Info
+                                stdoutL Level.Info
                                     <| consoleNN "Service Overloaded trying again for '%s' in %O." state.Host delay
                                 do! Async.sleepTimeSpan delay
                                 yield! pollUntilData state
@@ -501,14 +489,14 @@ let sslLabs (config: SslLabConfig) =
                 |> AsyncSeq.indexed
                 |> AsyncSeq.map (
                     fun (i, tail) ->
-                            (levelFilter Progress
+                            (levelFilter Level.Progress
                                 <| consoleN "-- %d of %i --- %O --" (i+1L) totalHosts (DateTime.UtcNow - startTime)
                             ) :: tail
                     )
                 |> AsyncSeq.collect AsyncSeq.ofSeq
                 |> AsyncSeq.choose stdoutOrStatus //Write out to console
                 |> AsyncSeq.fold (|||) ErrorStatus.Okay
-            stdoutL Progress <| consoleN "Completed: %O" DateTime.Now
+            stdoutL Level.Progress <| consoleN "Completed: %O" DateTime.Now
             //Final Error Summary
             if es = ErrorStatus.Okay then
                 stdout <| consoleN "All Clear%s." (emoji " 😃")
