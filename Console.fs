@@ -1,21 +1,24 @@
 ﻿module Console
 
-open FSharp.Interop.Compose.System
 open System
+open FSharp.Interop.Compose.System
+open DevLab.JmesPath.Functions
+open Newtonsoft.Json
+open Newtonsoft.Json.Linq
 
 [<Flags>]
 type Status = Okay = 0 
                    | Expiring = 1 
                    | GradeB = 2 
                    | CertIssue = 4 
-                   | JsonPathWarn = 8
+                   | QueryWarn = 8
                    // Gap to add More Warnings in the future
                    | Warn = 512 // Warn is < Warn
                    | Error = 1024 // Error is > Error
                    | NotGradeAOrB = 2048 
                    | Expired = 4096 
                    | ExceptionThrown = 8192
-                   | JsonPathError = 16384
+                   | QueryError = 16384
 
 [<RequireQualifiedAccess>]
 type Level = 
@@ -49,18 +52,23 @@ type ResultStream =
     | NoOp
     | ConsoleColorText of string * ConsoleColor
     | AddStatus of Status
-let private consoleStreamWriter (lineEnd:string) (color:ConsoleColor)  fmt =
+    | IncludedLevel of Level * ResultStream
+let private consoleStreamWriter (lineEnd:string) (color:ConsoleColor) fmt =
     let write (s:string) =
         ConsoleColorText(s + lineEnd, color)
     Printf.kprintf write fmt
+
+let includeLevel level result = IncludedLevel (level, result)
+
 let consoleN fmt = consoleStreamWriter Environment.NewLine originalColor fmt
 let consoleNN fmt = consoleStreamWriter (Environment.NewLine + Environment.NewLine) originalColor fmt 
 let console fmt = consoleStreamWriter String.Empty originalColor fmt 
 let consoleColorN color fmt = consoleStreamWriter Environment.NewLine color fmt 
-let consoleColorNN color fmt = consoleStreamWriter (Environment.NewLine + Environment.NewLine)  color fmt 
+let consoleColorNN color fmt = consoleStreamWriter (Environment.NewLine + Environment.NewLine) color fmt 
+
 let consoleColor color fmt = consoleStreamWriter String.Empty color fmt 
 let private consoleMonitor = obj()
-let stdoutOrStatusBy (optLevel, specifiedLevel) (result:ResultStream) =
+let rec stdoutOrStatusBy (optLevel, specifiedLevel) (result:ResultStream) =
     match result with
     | ConsoleColorText(s, color) ->
         if specifiedLevel <= optLevel then
@@ -73,5 +81,31 @@ let stdoutOrStatusBy (optLevel, specifiedLevel) (result:ResultStream) =
         None
     | AddStatus e -> Some e
     | NoOp  -> None
+    | IncludedLevel (level, result) -> stdoutOrStatusBy (optLevel, level) result
 let stdoutBy (optLevel, specifiedLevel) (result:ResultStream) =
     result |> stdoutOrStatusBy (optLevel, specifiedLevel) |> ignore
+
+
+[<AbstractClass>]
+type JmesLevelFunction (name, level) = 
+    inherit JmesPathFunction (name, 1) //Defined to have 1 argument
+    let addLevel (level:Level) (tok:JToken) =
+        let tok' = tok.DeepClone()
+        tok'.AddAnnotation(level)
+        tok'
+    override __.Execute([<ParamArray>]args:JmesPathFunctionArgument[]) : JToken= 
+        args |> Array.head |> (fun x -> x.Token |> addLevel level )
+
+type Error() = inherit JmesLevelFunction ("error", Level.Error)
+type Warn() = inherit JmesLevelFunction ("warn", Level.Warn)
+type Info() = inherit JmesLevelFunction ("info", Level.Info)
+type Progress() = inherit JmesLevelFunction ("progress", Level.Progress)
+type Debug() = inherit JmesLevelFunction ("debug", Level.Debug)
+type Trace() = inherit JmesLevelFunction ("trace", Level.Trace)
+
+let getLevel (tok:JToken) =
+    let annotes = tok.Annotations<Level>()
+    if annotes |> Seq.isEmpty then
+        Level.Info
+    else
+        annotes |> Seq.min

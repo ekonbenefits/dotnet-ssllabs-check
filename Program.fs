@@ -63,8 +63,9 @@ let main argv =
     let optEmoji = app.Option<bool>("--emoji", 
                                     "Show emoji when outputing to console", 
                                     CommandOptionType.NoValue)
-    let optJsonPath= app.Option<string>("--jsonpath <QUERY>",  "<QUERY> should start with #level# before JSONPath. If query finds anything flagged at leeel.", CommandOptionType.MultipleValue)
-                          .Accepts(validator(fun x->x.RegularExpression(SslLabs.jsonPathRegex,"Should be in the form of '#level#jsonpath'")))
+
+    let optJsonPath= app.Option<string>("--jmespath <QUERY>",  """<QUERY> is jmespath. See http://jmespath.org for spec. 
+    Custom functions for annotating log level. ie. | error(@) | warn (@) | info (@) | progress (@) | debug (@) | trace (@)""", CommandOptionType.MultipleValue)
     
     let hosts = app.Argument<string>("hostname(s)", "Hostnames to check SSL Grades and Validity", multipleValues=true)   
   
@@ -91,7 +92,7 @@ let main argv =
                     HostFile = optHostFile |> OptionToOption
                     Verbosity = optVerbose |> OptionToOption
                     API = optAPI |> OptionToOption
-                    JsonPaths = optJsonPath |> OptionToList
+                    Queries = optJsonPath |> OptionToList
                 }
             |> Async.RunSynchronously
         )

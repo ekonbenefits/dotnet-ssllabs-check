@@ -23,7 +23,9 @@ open FSharp.Interop.Compose.Linq
 open FSharp.Interop.Compose.System
 open FSharp.Interop.NullOptAble
 open FSharp.Interop.NullOptAble.Operators
+open DevLab.JmesPath
 open Console
+open Newtonsoft.Json.Linq
 
 module Hdr = FSharp.Data.HttpRequestHeaders
 type Host = JsonProvider<"samples/host.json">
@@ -48,19 +50,31 @@ type Error =
     | Error
 
 type IJsonDocument = FSharp.Data.Runtime.BaseTypes.IJsonDocument
-let jsonPathRegex = "^#(?<level>error|warn|info|progress|debug|trace)#(?<jsonpath>.+)$"
 let parseSslLabsError = 
     function | "READY" -> Ready 
              | "DNS" -> Dns 
              | "IN_PROGRESS" -> InProgress 
              | _ -> Error
 
-let parseJsonPath str =
-    let m = System.Text.RegularExpressions.Regex(jsonPathRegex).Match(str)
-    if m.Success then
-        Some  {|Level = parseConsoleError m.Groups.["level"].Value; Query = m.Groups.["jsonpath"].Value|}
-    else
-        None
+let jmes = 
+    let jmes' = JmesPath()
+    jmes'.FunctionRepository
+         .Register<Console.Error>()
+         .Register<Console.Warn>()
+         .Register<Console.Info>()
+         .Register<Console.Progress>()
+         .Register<Console.Debug>()
+         .Register<Console.Trace>() |> ignore
+    jmes'
+
+module JToken = 
+    let isNullOrEmpty (token:JToken) =
+        (token = null) ||
+        (token.Type = JTokenType.Array && not token.HasValues) ||
+        (token.Type = JTokenType.Object && not token.HasValues) ||
+        (token.Type = JTokenType.String && token.ToString() = String.Empty) ||
+        (token.Type = JTokenType.Null)
+
 let toIJsonDocOption target : IJsonDocument option =
     target |> Option.map (fun x-> upcast x)
 module Async =
@@ -129,7 +143,7 @@ let requestQ baseUrl parseF api q = async{
         return parseReq parseF resp
     }
 let failWithHttpStatus status = failwithf "Service Returned HTTP Status %i" status
-let hostJsonProcessor (queries:{|Level:Console.Level; Query:string|} seq) (data: Host.Root option)  =  
+let hostJsonProcessor (queries: string seq) (data: Host.Root option)  =  
     chooseSeq {
         let! data' = data
 
@@ -198,23 +212,25 @@ let hostJsonProcessor (queries:{|Level:Console.Level; Query:string|} seq) (data:
             let queryResults =
                 chooseSeq {
                     for q in queries do
+                        let! result = jmes.Transform(newtonJson, q) |> Option.ofObjWhenNot JToken.isNullOrEmpty
+                        let level = Console.getLevel result
                         let status, color = 
-                            match q.Level with
+                            match level with
                             | Level.Warn ->
-                                Status.JsonPathWarn, ConsoleColor.DarkYellow
+                                Status.QueryWarn, ConsoleColor.DarkYellow
                             | Level.Error ->
-                                Status.JsonPathError, ConsoleColor.DarkRed
+                                Status.QueryError, ConsoleColor.DarkRed
                             | _ -> //any other levels don't effect error status, nor make sense colored
                                 Status.Okay, originalColor
-                        let! result = newtonJson.SelectToken(q.Query)
                         yield! chooseSeq {
-                            yield consoleN "    '%s':" q.Query
-                            yield consoleColorN color "      %O" result
-                            yield AddStatus status
+                            yield includeLevel level <| consoleN "    '%s':" q
+                            yield includeLevel level <| consoleColorN color "%O" result
+                            yield includeLevel level <| AddStatus status
                         }
                 }
             if queryResults |> Seq.isEmpty |> not then
-                yield console "  Queried Data:"
+                let level = queryResults |> Seq.choose (function|IncludedLevel(l,_)-> Some l|_->None) |> Seq.min
+                yield includeLevel level <| consoleN "  Queried Data:"
                 yield! queryResults
         }
 //Check host list against SSLLabs.com
@@ -226,7 +242,7 @@ type Config = {
                         HostFile:      string option
                         Verbosity:     string option
                         API:           string option
-                        JsonPaths:      string list
+                        Queries:      string list
                     }
 let check (config: Config) =
     //Configure if showing emoji
@@ -243,12 +259,16 @@ let check (config: Config) =
 
     //setup some level functions
     let verboseLevel = defaultArg (config.Verbosity |> Option.map parseConsoleError) Level.Progress
-    let levelFilter level result = if level <= verboseLevel then result else NoOp
+    let rec levelFilter level result = 
+        match result with
+            | IncludedLevel(level', result') -> levelFilter level' result'
+            | _ -> if level <= verboseLevel then result else NoOp
     let stdout = stdoutBy (Level.Trace,Level.Trace) //Always Print
     let stdoutL level = stdoutBy (verboseLevel, level)
     let stdoutOrStatus = stdoutOrStatusBy (Level.Trace,Level.Trace) //Always Print
 
-    let jsonPathQueyies = config.JsonPaths |> Seq.choose parseJsonPath |> Seq.filter (fun jp -> jp.Level <= verboseLevel)
+    //force parse check
+    do config.Queries |> Seq.iter (jmes.Parse >> ignore)
 
     let writeJsonOutput (fData:IJsonDocument option) identifier =
         let asyncNoOp = lazy Async.Sleep 0
@@ -382,7 +402,7 @@ let check (config: Config) =
                     //If output directory specified, write out json data.
                     do! writeJsonOutput (data |> toIJsonDocOption) host
                     //Process host results
-                    let hostResults = data |> hostJsonProcessor jsonPathQueyies
+                    let hostResults = data |> hostJsonProcessor config.Queries
                     let hostEs = 
                          hostResults
                          |> Seq.choose (function|AddStatus e->Some e|_->None)
