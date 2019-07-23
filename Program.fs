@@ -93,8 +93,10 @@ let main argv =
                     Verbosity = optVerbose |> OptionToOption
                     API = optAPI |> OptionToOption
                     Queries = optJsonPath |> OptionToList
+                    LogWrite = Console.lockingWrite
                 }
             |> Async.RunSynchronously
+            |> int
         )
 
     app.Execute(argv)

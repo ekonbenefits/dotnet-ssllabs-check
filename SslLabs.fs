@@ -248,6 +248,7 @@ type Config = {
                         Verbosity:     string option
                         API:           string option
                         Queries:      string list
+                        LogWrite:     ConsoleColor -> string -> unit
                     }
 let check (config: Config) =
     //Configure if showing emoji
@@ -268,9 +269,10 @@ let check (config: Config) =
         match result with
             | IncludedLevel(level', result') -> levelFilter level' result'
             | _ -> if level <= verboseLevel then result else NoOp
-    let stdout = stdoutBy (Level.Trace,Level.Trace) //Always Print
-    let stdoutL level = stdoutBy (verboseLevel, level)
-    let stdoutOrStatus = stdoutOrStatusBy (Level.Trace,Level.Trace) //Always Print
+
+    let stdout = stdoutOrStatusBy config.LogWrite None >> ignore //Always Print
+    let stdoutL level = stdoutOrStatusBy config.LogWrite (Some {|Verbosity= verboseLevel; DefaultLevel = level|}) >> ignore
+    let stdoutOrStatus = stdoutOrStatusBy config.LogWrite None //Always Print
 
     //force parse check
     do config.Queries |> Seq.iter (jmes.Parse >> ignore)
@@ -319,7 +321,7 @@ let check (config: Config) =
         }
         if config.VersionOnly then
             stdoutL Level.Info  <| consoleNN "Assessments Available %i of %i" cur1st max1st
-            return int Status.Okay
+            return Status.Okay
         else
             stdoutL Level.Progress <| consoleNN "Started: %O" DateTime.Now
             stdout  <| consoleN "Hostnames to Check:"
@@ -480,5 +482,5 @@ let check (config: Config) =
                 let scream = emoji " 😱"
                 let frown = emoji " 😦"
                 stdout <| consoleN "Found Error(s)%s: %A" (if es < Status.Warn then frown else scream) es
-            return int es
+            return es
     }

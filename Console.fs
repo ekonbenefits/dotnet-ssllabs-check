@@ -4,6 +4,7 @@ open System
 open System.IO
 open System.Text
 open FSharp.Interop.Compose.System
+open FSharp.Interop.NullOptAble
 open DevLab.JmesPath.Functions
 open Newtonsoft.Json
 open Newtonsoft.Json.Linq
@@ -71,22 +72,29 @@ let consoleColorNN color fmt = consoleStreamWriter (Environment.NewLine + Enviro
 
 let consoleColor color fmt = consoleStreamWriter String.Empty color fmt 
 let private consoleMonitor = obj()
-let rec stdoutOrStatusBy (optLevel, specifiedLevel) (result:ResultStream) =
+
+let lockingWrite color (text:string) =
+    lock(consoleMonitor) (
+        fun () ->
+            Console.ForegroundColor <- color
+            Console.Write(text)
+            Console.ForegroundColor <- originalColor
+    )
+
+let rec stdoutOrStatusBy (write:ConsoleColor -> string -> unit) (by:{|Verbosity:Level; DefaultLevel:Level|} option) (result:ResultStream) =
     match result with
     | ConsoleColorText(s, color) ->
-        if specifiedLevel <= optLevel then
-            lock(consoleMonitor) (
-                fun () ->
-                    Console.ForegroundColor <- color
-                    Console.Write(s)
-                    Console.ForegroundColor <- originalColor
-            )
+        let display =
+            match by with
+            | Some by' -> by'.DefaultLevel <= by'.Verbosity 
+            | None -> true
+        if display then
+            s |> write color
         None
     | AddStatus e -> Some e
     | NoOp  -> None
-    | IncludedLevel (level, result) -> stdoutOrStatusBy (optLevel, level) result
-let stdoutBy (optLevel, specifiedLevel) (result:ResultStream) =
-    result |> stdoutOrStatusBy (optLevel, specifiedLevel) |> ignore
+    | IncludedLevel (level, result) -> stdoutOrStatusBy write (option{ let! by' = by
+                                                                       return {|by' with Verbosity = level|} }) result
 
 //Not tail recursive, but should be fine
 let rec indent (spaces: int) result =
