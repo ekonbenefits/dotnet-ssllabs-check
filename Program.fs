@@ -55,7 +55,7 @@ let main argv =
 
     let optVerbose = app.Option<string>("--verbosity <LEVEL>", 
                          """Level of data written to the console (error,warn,info,progress,debug,trace)
-[default: progress]""", 
+    [default: progress]""", 
                          CommandOptionType.SingleValue)
                          .Accepts(validator(fun x-> x.Values(true,"error","warn","info","progress","debug","trace")))
     let optAPI = app.Option<string>("--api <API>", 
@@ -65,10 +65,15 @@ let main argv =
                                     "Show emoji when outputing to console", 
                                     CommandOptionType.NoValue)
 
-    let optJsonPath= app.Option<string>("--jmespath <QUERY>",  """<QUERY> written in jmespath. See http://jmespath.org for spec. 
+    let optJmesPath= app.Option<string>("--jmespath <QUERY>",  """<QUERY> written in jmespath. See http://jmespath.org for spec. 
     Custom functions for annotating log level. 
     ie. | error(@) | warn (@) | info (@) | progress (@) | debug (@) | trace (@)""", CommandOptionType.MultipleValue)
     
+    let optJmesPathFile = app.Option<string>("--jmespathfile <PATH>", 
+                                    "Retreive list of jmespath queries from file to check (one query per line, # preceding comments)", 
+                                    CommandOptionType.SingleValue)
+                             .Accepts(validator(fun x-> x.ExistingFile()))
+
     let hosts = app.Argument<string>("hostname(s)", "Hostnames to check SSL Grades and Validity", multipleValues=true)   
   
     app.OnValidate(
@@ -94,7 +99,8 @@ let main argv =
                     HostFile = optHostFile |> OptionToOption
                     Verbosity = optVerbose |> OptionToOption
                     API = optAPI |> OptionToOption
-                    Queries = optJsonPath |> OptionToList
+                    Queries = optJmesPath |> OptionToList
+                    QueriesFile = optJmesPathFile |> OptionToOption
                     LogWrite = Console.lockingWrite
                 }
             |> Async.RunSynchronously

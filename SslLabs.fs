@@ -223,6 +223,7 @@ type Config = {
                         Verbosity:     string option
                         API:           string option
                         Queries:       string list
+                        QueriesFile:   string option
                         LogWrite:      ConsoleColor -> string -> unit
                     }
 let check (config: Config) =
@@ -249,8 +250,7 @@ let check (config: Config) =
     let stdoutL level = stdoutOrStatusBy config.LogWrite (Some {|Verbosity= verboseLevel; DefaultLevel = level|}) >> ignore
     let stdoutOrStatus = stdoutOrStatusBy config.LogWrite None //Always Print
 
-    //force parse check
-    do config.Queries |> Seq.iter (jmes.Parse >> ignore)
+
 
     let writeJsonOutput (fData:IJsonDocument option) identifier =
         let asyncNoOp = lazy Async.Sleep 0
@@ -280,6 +280,24 @@ let check (config: Config) =
                 stdout <| consoleNN "%s - Unofficial Client - service unavailable" userAgent
                 failWithHttpStatus info.Status
         updateAssessmentReq cur1st max1st
+  
+        let! moreQueries = 
+            chooseSeq { 
+                let! qFile = config.QueriesFile
+                yield asyncSeq {
+                    let! contents = File.ReadAllLinesAsync qFile |> Async.AwaitTask
+                    yield! contents |> Array.toSeq |> Seq.filter (not << String.startsWith "#") |> AsyncSeq.ofSeq
+                }
+            } 
+            |> AsyncSeq.ofSeq 
+            |> AsyncSeq.collect id
+            |> AsyncSeq.toListAsync
+
+        let queries = config.Queries @ moreQueries
+
+        //force parse check
+        do queries |> Seq.iter (jmes.Parse >> ignore)
+
         //get host from arguments or file
         let! hosts = option {
                         let! hostFile = config.HostFile
@@ -384,7 +402,7 @@ let check (config: Config) =
                     //If output directory specified, write out json data.
                     do! writeJsonOutput (data |> toIJsonDocOption) host
                     //Process host results
-                    let hostResults = data |> hostJsonProcessor config.Queries
+                    let hostResults = data |> hostJsonProcessor queries
                     let hostEs = 
                          hostResults
                          |> Seq.map extractStatus
