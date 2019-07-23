@@ -64,7 +64,8 @@ let main argv =
                                        CommandOptionType.SingleValue)
 
     let optHostFile = app.Option<string>("--hostfile <PATH>", 
-                                    "Retreive list of hostnames from file to check (one host per line, # preceding comments)", 
+                                    """Retreive list of hostnames from file to check 
+    (one host per line, # preceding comments)""", 
                                     CommandOptionType.SingleValue)
                          .Accepts(validator(fun x-> x.ExistingFile()))
 
@@ -85,7 +86,8 @@ let main argv =
     ie. | error(@) | warn (@) | info (@) | progress (@) | debug (@) | trace (@)""", CommandOptionType.MultipleValue)
     
     let optJmesPathFile = app.Option<string>("--jmespathfile <PATH>", 
-                                    "Retreive list of jmespath queries from file to check (one query per line, # preceding comments)", 
+                                    """Retreive list of jmespath queries from file to check 
+    (one query per line, # preceding comments)""", 
                                     CommandOptionType.SingleValue)
                              .Accepts(validator(fun x-> x.ExistingFile()))
 
