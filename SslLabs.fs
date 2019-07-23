@@ -217,9 +217,9 @@ let hostJsonProcessor (queries: string seq) (data: Host.Root option)  =
                         let status, color = 
                             match level with
                             | Level.Warn ->
-                                Status.QueryWarn, ConsoleColor.DarkYellow
+                                Status.QueriedWarn, ConsoleColor.DarkYellow
                             | Level.Error ->
-                                Status.QueryError, ConsoleColor.DarkRed
+                                Status.QueriedError, ConsoleColor.DarkRed
                             | _ -> //any other levels don't effect error status, nor make sense colored
                                 Status.Okay, originalColor
                         yield! chooseSeq {
