@@ -225,8 +225,8 @@ type Config = {
                         HostFile:      string option
                         Verbosity:     string option
                         API:           string option
-                        Queries:      string list
-                        LogWrite:     ConsoleColor -> string -> unit
+                        Queries:       string list
+                        LogWrite:      ConsoleColor -> string -> unit
                     }
 let check (config: Config) =
     //Configure if showing emoji
