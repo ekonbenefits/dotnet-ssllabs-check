@@ -28,19 +28,7 @@ open Console
 module Hdr = FSharp.Data.HttpRequestHeaders
 type SslLabsHost = JsonProvider<"samples/host.json">
 type SslLabsInfo = JsonProvider<"samples/info.json">
-[<Flags>]
-type ErrorStatus = Okay = 0 
-                   | Expiring = 1 
-                   | GradeB = 2 
-                   | CertIssue = 4 
-                   | JsonPathWarn = 8
-                   // Gap to add More Warnings in the future
-                   | Warn = 512 // Warn is < Warn
-                   | Error = 1024 // Error is > Error
-                   | NotGradeAOrB = 2048 
-                   | Expired = 4096 
-                   | ExceptionThrown = 8192
-                   | JsonPathError = 16384
+
 type CertIssue = Okay = 0
                  | NoChainOfTrust = 1
                  | NotBeforeDate =2
@@ -52,6 +40,7 @@ type CertIssue = Okay = 0
                  | Blacklisted = 128
                  | InsecureSignature = 256
                  | InsecureKey = 512
+
 type SslLabsError = 
     Ready
     | Dns
@@ -72,13 +61,6 @@ let parseJsonPath str =
         Some  {|Level = parseConsoleError m.Groups.["level"].Value; Query = m.Groups.["jsonpath"].Value|}
     else
         None
-let levelForErrorStatus errorStatus =
-    if errorStatus = ErrorStatus.Okay then
-        Level.Info
-    elif errorStatus <= ErrorStatus.Warn then
-        Level.Warn
-    else
-        Level.Error
 let toIJsonDocOption target : IJsonDocument option =
     target |> Option.map (fun x-> upcast x)
 module Async =
@@ -105,38 +87,7 @@ let tooManyReqPolling () =
     |> float
     |> TimeSpan.FromSeconds
 
-//Setup Console initial state and functions
-let originalColor = Console.ForegroundColor
-type ResultStream =
-    | NoOp
-    | ConsoleColorText of string * ConsoleColor
-    | AddStatus of ErrorStatus
-let private consoleStreamWriter (lineEnd:string) (color:ConsoleColor)  fmt =
-    let write (s:string) =
-        ConsoleColorText(s + lineEnd, color)
-    Printf.kprintf write fmt
-let consoleN fmt = consoleStreamWriter Environment.NewLine originalColor fmt
-let consoleNN fmt = consoleStreamWriter (Environment.NewLine + Environment.NewLine) originalColor fmt 
-let console fmt = consoleStreamWriter String.Empty originalColor fmt 
-let consoleColorN color fmt = consoleStreamWriter Environment.NewLine color fmt 
-let consoleColorNN color fmt = consoleStreamWriter (Environment.NewLine + Environment.NewLine)  color fmt 
-let consoleColor color fmt = consoleStreamWriter String.Empty color fmt 
-let private consoleMonitor = obj()
-let stdoutOrStatusBy (optLevel, specifiedLevel) (result:ResultStream) =
-    match result with
-    | ConsoleColorText(s, color) ->
-        if specifiedLevel <= optLevel then
-            lock(consoleMonitor) (
-                fun () ->
-                    Console.ForegroundColor <- color
-                    Console.Write(s)
-                    Console.ForegroundColor <- originalColor
-            )
-        None
-    | AddStatus e -> Some e
-    | NoOp  -> None
-let stdoutBy (optLevel, specifiedLevel) (result:ResultStream) =
-    result |> stdoutOrStatusBy (optLevel, specifiedLevel) |> ignore
+
 
 // Global Assement quote variable to track when to slow down assessments when there are too many
 let assessmentTrack = ref (0,0)
@@ -213,15 +164,15 @@ let hostJsonProcessor (queries:{|Level:Console.Level; Query:string|} seq) (data:
             if issue <> CertIssue.Okay then
                 yield console "    Problem(s): "
                 yield consoleColorN ConsoleColor.DarkRed "%A" issue
-                yield AddStatus ErrorStatus.CertIssue
+                yield AddStatus Status.CertIssue
             //Check Expiration of Cert
             let status, color, label =
                 if expireSpan <=TimeSpan.FromDays 0.0 then
-                    ErrorStatus.Expired, ConsoleColor.DarkRed, "Expired"
+                    Status.Expired, ConsoleColor.DarkRed, "Expired"
                 elif expireSpan <= warningSpan then
-                    ErrorStatus.Expiring, ConsoleColor.DarkYellow, "Expires"
+                    Status.Expiring, ConsoleColor.DarkYellow, "Expires"
                 else
-                    ErrorStatus.Okay, ConsoleColor.DarkGreen, "Expires"
+                    Status.Okay, ConsoleColor.DarkGreen, "Expires"
             yield console "    %s: " label
             let expiration = expireSpan.Days;
             if expiration > 0 then
@@ -235,9 +186,9 @@ let hostJsonProcessor (queries:{|Level:Console.Level; Query:string|} seq) (data:
             yield consoleN "  Endpoint '%s': " ep.IpAddress
             let status, color = 
                 match (ep.Grade) with
-                | Grade "A" -> ErrorStatus.Okay, ConsoleColor.DarkGreen
-                | Grade "B" -> ErrorStatus.GradeB, ConsoleColor.DarkYellow
-                | _ -> ErrorStatus.NotGradeAOrB, ConsoleColor.DarkRed
+                | Grade "A" -> Status.Okay, ConsoleColor.DarkGreen
+                | Grade "B" -> Status.GradeB, ConsoleColor.DarkYellow
+                | _ -> Status.NotGradeAOrB, ConsoleColor.DarkRed
             yield console "    Grade: "
             yield consoleColorN color "%s" ep.Grade
             yield AddStatus status
@@ -250,11 +201,11 @@ let hostJsonProcessor (queries:{|Level:Console.Level; Query:string|} seq) (data:
                         let status, color = 
                             match q.Level with
                             | Level.Warn ->
-                                ErrorStatus.JsonPathWarn, ConsoleColor.DarkYellow
+                                Status.JsonPathWarn, ConsoleColor.DarkYellow
                             | Level.Error ->
-                                ErrorStatus.JsonPathError, ConsoleColor.DarkRed
+                                Status.JsonPathError, ConsoleColor.DarkRed
                             | _ -> //any other levels don't effect error status, nor make sense colored
-                                ErrorStatus.Okay, originalColor
+                                Status.Okay, originalColor
                         let! result = newtonJson.SelectToken(q.Query)
                         yield! chooseSeq {
                             yield consoleN "    '%s':" q.Query
@@ -343,7 +294,7 @@ let sslLabs (config: SslLabConfig) =
         }
         if config.VersionOnly then
             stdoutL Level.Info  <| consoleNN "Assessments Available %i of %i" cur1st max1st
-            return int ErrorStatus.Okay
+            return int Status.Okay
         else
             stdoutL Level.Progress <| consoleNN "Started: %O" DateTime.Now
             stdout  <| consoleN "Hostnames to Check:"
@@ -435,19 +386,19 @@ let sslLabs (config: SslLabConfig) =
                     let hostEs = 
                          hostResults
                          |> Seq.choose (function|AddStatus e->Some e|_->None)
-                         |> Seq.fold (|||) ErrorStatus.Okay
+                         |> Seq.fold (|||) Status.Okay
 
-                    let mark = match hostEs with | ErrorStatus.Okay -> emoji "✔" 
-                                                 | x when x < ErrorStatus.Warn -> emoji "⚠️"
+                    let mark = match hostEs with | Status.Okay -> emoji "✔" 
+                                                 | x when x < Status.Warn -> emoji "⚠️"
                                                  | _ -> emoji "❌"
 
-                    let hostLevel = levelForErrorStatus hostEs
+                    let hostLevel = levelForStatus hostEs
                     yield levelFilter hostLevel
                            <| consoleN "%s%s: " host mark
                     //this intentionally supresses exit status for warning level status if verbosity=Error
                     yield! hostResults |> Seq.map (levelFilter hostLevel) |> AsyncSeq.ofSeq
                     //Error Summary
-                    if hostEs <> ErrorStatus.Okay then
+                    if hostEs <> Status.Okay then
                          yield levelFilter hostLevel
                                <| consoleN "  Has Error(s): %A" hostEs
                     //SSL Labs link
@@ -458,7 +409,7 @@ let sslLabs (config: SslLabConfig) =
                 with ex -> 
                     yield consoleN "%s❌: " host
                     yield consoleN "%s (Unexpected Error):" host
-                    yield consoleN "  Has Error(s): %A" ErrorStatus.ExceptionThrown
+                    yield consoleN "  Has Error(s): %A" Status.ExceptionThrown
                     yield consoleN "--------------"
                     let rec printExn : exn -> ResultStream seq =
                         function
@@ -476,7 +427,7 @@ let sslLabs (config: SslLabConfig) =
                              }
                     yield! AsyncSeq.ofSeq <| printExn ex
                     yield consoleNN "--------------"
-                    yield AddStatus ErrorStatus.ExceptionThrown
+                    yield AddStatus Status.ExceptionThrown
                 }
             let startTime = DateTime.UtcNow
             let totalHosts = hosts |> Seq.length
@@ -495,14 +446,14 @@ let sslLabs (config: SslLabConfig) =
                     )
                 |> AsyncSeq.collect AsyncSeq.ofSeq
                 |> AsyncSeq.choose stdoutOrStatus //Write out to console
-                |> AsyncSeq.fold (|||) ErrorStatus.Okay
+                |> AsyncSeq.fold (|||) Status.Okay
             stdoutL Level.Progress <| consoleN "Completed: %O" DateTime.Now
             //Final Error Summary
-            if es = ErrorStatus.Okay then
+            if es = Status.Okay then
                 stdout <| consoleN "All Clear%s." (emoji " 😃")
             else
                 let scream = emoji " 😱"
                 let frown = emoji " 😦"
-                stdout <| consoleN "Found Error(s)%s: %A" (if es < ErrorStatus.Warn then frown else scream) es
+                stdout <| consoleN "Found Error(s)%s: %A" (if es < Status.Warn then frown else scream) es
             return int es
     }
