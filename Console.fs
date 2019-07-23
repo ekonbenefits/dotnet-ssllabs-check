@@ -1,24 +1,27 @@
 ﻿module Console
 
 open System
+open System.IO
+open System.Text
 open FSharp.Interop.Compose.System
 open DevLab.JmesPath.Functions
 open Newtonsoft.Json
 open Newtonsoft.Json.Linq
+
 
 [<Flags>]
 type Status = Okay = 0 
                    | Expiring = 1 
                    | GradeB = 2 
                    | CertIssue = 4 
-                   | QueryWarn = 8
+                   | QueriedWarn = 8
                    // Gap to add More Warnings in the future
                    | Warn = 512 // Warn is < Warn
                    | Error = 1024 // Error is > Error
                    | NotGradeAOrB = 2048 
                    | Expired = 4096 
                    | ExceptionThrown = 8192
-                   | QueryError = 16384
+                   | QueriedError = 16384
 
 [<RequireQualifiedAccess>]
 type Level = 
@@ -85,6 +88,18 @@ let rec stdoutOrStatusBy (optLevel, specifiedLevel) (result:ResultStream) =
 let stdoutBy (optLevel, specifiedLevel) (result:ResultStream) =
     result |> stdoutOrStatusBy (optLevel, specifiedLevel) |> ignore
 
+//Not tail recursive, but should be fine
+let rec indent (spaces: int) result =
+    match result with
+    | ConsoleColorText(text, color) ->
+        use reader = new StringReader(text)
+        let sb = StringBuilder()
+        while reader.Peek() > -1 do
+            let read = reader.ReadLine()
+            sb.AppendLine(sprintf "%s%s" (String.replicate spaces " ") read) |> ignore
+        ConsoleColorText(sb.ToString(), color)
+    | IncludedLevel (level', result') -> IncludedLevel(level', indent spaces result')
+    | x -> x
 
 [<AbstractClass>]
 type JmesLevelFunction (name, level) = 

@@ -223,14 +223,19 @@ let hostJsonProcessor (queries: string seq) (data: Host.Root option)  =
                             | _ -> //any other levels don't effect error status, nor make sense colored
                                 Status.Okay, originalColor
                         yield! chooseSeq {
-                            yield includeLevel level <| consoleN "    '%s':" q
-                            yield includeLevel level <| consoleColorN color "%O" result
-                            yield includeLevel level <| AddStatus status
+                            yield consoleN "'%s':" q
+                                |> indent 4
+                                |> includeLevel level
+                            yield consoleColorN color "%O" result
+                                |> indent 6
+                                |> includeLevel level
+                            yield AddStatus status
+                                |> includeLevel level
                         }
                 }
             if queryResults |> Seq.isEmpty |> not then
                 let level = queryResults |> Seq.choose (function|IncludedLevel(l,_)-> Some l|_->None) |> Seq.min
-                yield includeLevel level <| consoleN "  Queried Data:"
+                yield consoleN "Queried Data:" |> indent 2 |> includeLevel level
                 yield! queryResults
         }
 //Check host list against SSLLabs.com
