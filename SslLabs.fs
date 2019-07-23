@@ -54,7 +54,6 @@ let parseSslLabsError =
              | "IN_PROGRESS" -> InProgress 
              | _ -> Error
 
-
 module Async =
     let sleepTimeSpan (time:TimeSpan) =
         Async.Sleep (int time.TotalMilliseconds)
@@ -78,8 +77,6 @@ let tooManyReqPolling () =
     random.Next(5, 20)
     |> float
     |> TimeSpan.FromSeconds
-
-
 
 // Global Assement quote variable to track when to slow down assessments when there are too many
 let assessmentTrack = ref (0,0)
