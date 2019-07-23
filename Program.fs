@@ -15,8 +15,13 @@
 *)
 open System
 open System.ComponentModel.DataAnnotations
+open System.IO
 open System.Linq
+open FSharp.Interop.Compose.System
+open FSharp.Interop.NullOptAble
+open FSharp.Interop.NullOptAble.Operators
 open McMaster.Extensions.CommandLineUtils
+
 
 let OptionToOption (opt:CommandOption<'T>) =
     if opt.HasValue() then
@@ -29,6 +34,16 @@ let OptionToList (opt:CommandOption<'T>) =
         opt.ParsedValues |> List.ofSeq
     else
         List.empty
+
+let private emptyAsyncList = lazy async { return List.empty }
+let OptionFileToList (opt:CommandOption<string>) =
+    option {
+        let! path = opt |> OptionToOption
+        return async {
+            let! contents = File.ReadAllLinesAsync path |> Async.AwaitTask
+            return contents |> Array.toList |> List.filter (not << String.startsWith "#")
+        } 
+    } |?-> emptyAsyncList
 
 let validator (f:Validation.IOptionValidationBuilder<_>->'b) : Validation.IOptionValidationBuilder<_> -> unit =
     fun x -> f x |> ignore
@@ -82,29 +97,31 @@ let main argv =
                     && not <| hosts.Values.Any() 
                     && not <| optHostFile.HasValue() then
                 ValidationResult("At least one <hostname> argument or the --hostfile flag is required.")
-            elif hosts.Values.Any() 
-                    && optHostFile.HasValue() then
-                ValidationResult("If using the --hostfile flag  don't include <hostname> arguments.")
             else
                 ValidationResult.Success
         ) |> ignore
 
     app.OnExecute(
         fun ()->
-            SslLabs.check {
-                    OptOutputDir = optOutDir |> OptionToOption
-                    Emoji = optEmoji.HasValue()
-                    VersionOnly = optVersion.HasValue()
-                    Hosts = hosts.Values
-                    HostFile = optHostFile |> OptionToOption
-                    Verbosity = optVerbose |> OptionToOption
-                    API = optAPI |> OptionToOption
-                    Queries = optJmesPath |> OptionToList
-                    QueriesFile = optJmesPathFile |> OptionToOption
-                    LogWrite = Console.lockingWrite
-                }
-            |> Async.RunSynchronously
-            |> int
+            async{
+
+                let! hostFileList = optHostFile |> OptionFileToList
+                let! jmesPathList = optJmesPathFile |> OptionFileToList
+
+                let! check =
+                    SslLabs.check {
+                        OptOutputDir = optOutDir |> OptionToOption
+                        Emoji = optEmoji.HasValue()
+                        VersionOnly = optVersion.HasValue()
+                        Hosts = (hosts.Values |> List.ofSeq) @ hostFileList 
+                        Verbosity = optVerbose |> OptionToOption
+                        API = optAPI |> OptionToOption
+                        Queries = (optJmesPath |> OptionToList) @ jmesPathList
+                        LogWrite = Console.lockingWrite
+                    }
+                return int check
+            } 
+            |> Async.StartAsTask
         )
 
     app.Execute(argv)

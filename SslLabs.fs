@@ -219,11 +219,9 @@ type Config = {
                         Emoji:         bool
                         VersionOnly:   bool
                         Hosts:         string seq
-                        HostFile:      string option
                         Verbosity:     string option
                         API:           string option
-                        Queries:       string list
-                        QueriesFile:   string option
+                        Queries:       string seq
                         LogWrite:      ConsoleColor -> string -> unit
                     }
 let check (config: Config) =
@@ -281,31 +279,9 @@ let check (config: Config) =
                 failWithHttpStatus info.Status
         updateAssessmentReq cur1st max1st
   
-        let! moreQueries = 
-            chooseSeq { 
-                let! qFile = config.QueriesFile
-                yield asyncSeq {
-                    let! contents = File.ReadAllLinesAsync qFile |> Async.AwaitTask
-                    yield! contents |> Array.toSeq |> Seq.filter (not << String.startsWith "#") |> AsyncSeq.ofSeq
-                }
-            } 
-            |> AsyncSeq.ofSeq 
-            |> AsyncSeq.collect id
-            |> AsyncSeq.toListAsync
-
-        let queries = config.Queries @ moreQueries
-
         //force parse check
-        do queries |> Seq.iter (jmes.Parse >> ignore)
+        do config.Queries |> Seq.iter (jmes.Parse >> ignore)
 
-        //get host from arguments or file
-        let! hosts = option {
-                        let! hostFile = config.HostFile
-                        return async {
-                            let! contents = File.ReadAllLinesAsync hostFile |> Async.AwaitTask
-                            return contents |> Array.toSeq |> Seq.filter (not << String.startsWith "#")
-                        }
-                     } |?-> lazy (async { return config.Hosts })
         if config.API |> Option.isSome then
             stdoutL Level.Info  <| consoleNN "API: %s" baseUrl
         guard {
@@ -318,7 +294,7 @@ let check (config: Config) =
         else
             stdoutL Level.Progress <| consoleNN "Started: %O" DateTime.Now
             stdout  <| consoleN "Hostnames to Check:"
-            for host in hosts do
+            for host in config.Hosts do
                 stdout <| consoleN " %s" host
             stdout  <| consoleN ""
             //If output directory specified, write out json data.
@@ -402,7 +378,7 @@ let check (config: Config) =
                     //If output directory specified, write out json data.
                     do! writeJsonOutput (data |> toIJsonDocOption) host
                     //Process host results
-                    let hostResults = data |> hostJsonProcessor queries
+                    let hostResults = data |> hostJsonProcessor config.Queries
                     let hostEs = 
                          hostResults
                          |> Seq.map extractStatus
@@ -450,9 +426,9 @@ let check (config: Config) =
                     yield AddStatus Status.ExceptionThrown
                 }
             let startTime = DateTime.UtcNow
-            let totalHosts = hosts |> Seq.length
+            let totalHosts = config.Hosts |> Seq.length
             let! es = 
-                hosts
+                config.Hosts
                 |> Seq.indexed
                 |> AsyncSeq.ofSeq
                 |> AsyncSeq.map parallelProcessHost
