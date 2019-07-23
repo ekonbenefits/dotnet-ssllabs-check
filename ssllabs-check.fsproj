@@ -34,7 +34,7 @@
     <Content Include="samples\info.json" />
     <Compile Include="AsyncSeq.fs" />
     <Compile Include="Console.fs" />
-    <Compile Include="Check.fs" />
+    <Compile Include="SslLabs.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

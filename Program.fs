@@ -64,7 +64,7 @@ let main argv =
                                     "Show emoji when outputing to console", 
                                     CommandOptionType.NoValue)
     let optJsonPath= app.Option<string>("--jsonpath <QUERY>",  "<QUERY> should start with #level# before JSONPath. If query finds anything flagged at leeel.", CommandOptionType.MultipleValue)
-                          .Accepts(validator(fun x->x.RegularExpression(Check.jsonPathRegex,"Should be in the form of '#level#jsonpath'")))
+                          .Accepts(validator(fun x->x.RegularExpression(SslLabs.jsonPathRegex,"Should be in the form of '#level#jsonpath'")))
     
     let hosts = app.Argument<string>("hostname(s)", "Hostnames to check SSL Grades and Validity", multipleValues=true)   
   
@@ -83,7 +83,7 @@ let main argv =
 
     app.OnExecute(
         fun ()->
-            Check.sslLabs {
+            SslLabs.check {
                     OptOutputDir = optOutDir |> OptionToOption
                     Emoji = optEmoji.HasValue()
                     VersionOnly = optVersion.HasValue()

@@ -13,7 +13,7 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 *)
-module Check
+module SslLabs
 
 open System
 open System.IO
@@ -26,8 +26,8 @@ open FSharp.Interop.NullOptAble.Operators
 open Console
 
 module Hdr = FSharp.Data.HttpRequestHeaders
-type SslLabsHost = JsonProvider<"samples/host.json">
-type SslLabsInfo = JsonProvider<"samples/info.json">
+type Host = JsonProvider<"samples/host.json">
+type Info = JsonProvider<"samples/info.json">
 
 type CertIssue = Okay = 0
                  | NoChainOfTrust = 1
@@ -41,7 +41,7 @@ type CertIssue = Okay = 0
                  | InsecureSignature = 256
                  | InsecureKey = 512
 
-type SslLabsError = 
+type Error = 
     Ready
     | Dns
     | InProgress
@@ -53,7 +53,7 @@ let parseSslLabsError =
     function | "READY" -> Ready 
              | "DNS" -> Dns 
              | "IN_PROGRESS" -> InProgress 
-             | _ -> SslLabsError.Error
+             | _ -> Error
 
 let parseJsonPath str =
     let m = System.Text.RegularExpressions.Regex(jsonPathRegex).Match(str)
@@ -129,7 +129,7 @@ let requestQ baseUrl parseF api q = async{
         return parseReq parseF resp
     }
 let failWithHttpStatus status = failwithf "Service Returned HTTP Status %i" status
-let hostJsonProcessor (queries:{|Level:Console.Level; Query:string|} seq) (data: SslLabsHost.Root option)  =  
+let hostJsonProcessor (queries:{|Level:Console.Level; Query:string|} seq) (data: Host.Root option)  =  
     chooseSeq {
         let! data' = data
 
@@ -218,7 +218,7 @@ let hostJsonProcessor (queries:{|Level:Console.Level; Query:string|} seq) (data:
                 yield! queryResults
         }
 //Check host list against SSLLabs.com
-type SslLabConfig = { 
+type Config = { 
                         OptOutputDir:  string option
                         Emoji:         bool
                         VersionOnly:   bool
@@ -228,7 +228,7 @@ type SslLabConfig = {
                         API:           string option
                         JsonPaths:      string list
                     }
-let sslLabs (config: SslLabConfig) =
+let check (config: Config) =
     //Configure if showing emoji
     let emoji s = if config.Emoji then s else String.Empty
     if config.Emoji then
@@ -265,7 +265,7 @@ let sslLabs (config: SslLabConfig) =
     //Main Logic
     async {
         //Print out SSL Labs Info
-        let! info = request' SslLabsInfo.Parse "/info"
+        let! info = request' Info.Parse "/info"
         let newCoolOff, cur1st, max1st =
             match info.Data with
             | Some i ->
@@ -321,7 +321,7 @@ let sslLabs (config: SslLabConfig) =
                             stdoutL Level.Debug
                                 <| consoleN "%O ATTEMPT New Req '%s'#%i (Reqs/Max: %i/%i)"
                                     DateTime.Now state.Host state.Index check.Current check.Max
-                        let! analyze = requestQ' SslLabsHost.Parse "/analyze"
+                        let! analyze = requestQ' Host.Parse "/analyze"
                                             <| ["host", state.Host; "all", "done"] @ state.StartQ
                         match analyze.Data with
                         | Some data ->
@@ -337,7 +337,7 @@ let sslLabs (config: SslLabConfig) =
                             match status with
                                 | Ready ->
                                     yield data
-                                | SslLabsError.Error -> 
+                                | Error -> 
                                     let statusMessage = data.JsonValue.Item("statusMessage").ToString()
                                     failwithf "Error Analyzing %s - %s" state.Host statusMessage
                                 | Dns -> 
