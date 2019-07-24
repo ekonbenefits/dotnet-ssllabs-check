@@ -34,8 +34,17 @@ Options:
   -?|-h|--help             Show help information
   -v|--version             Show version and service information
   -o|--output <DIRECTORY>  Output directory for json data [Default: does not write out data]
-  --hostfile <PATH>        Retreive list of hostnames from file to check (one host per line, # preceding comments)
+  --hostfile <PATH>        Retreive list of hostnames from file to check
+                               (one host per line, # preceding comments)
+  --verbosity <LEVEL>      Level of data written to the console (error,warn,info,progress,debug,trace)
+                               [default: progress]
+  --api <API>              Alternative API endpoint (ie. preproduction: https://api.dev.ssllabs.com/api/v3/)
   --emoji                  Show emoji when outputing to console
+  --jmespath <QUERY>       <QUERY> written in jmespath. See http://jmespath.org for spec.
+                               Custom functions for annotating log level.
+                               ie. | error(@) | warn (@) | info (@) | progress (@) | debug (@) | trace (@)
+  --jmespathfile <PATH>    Retreive list of jmespath queries from file to check
+                               (one query per line, # preceding comments)
 ```
 
 ## Features
@@ -45,6 +54,7 @@ Options:
 - Shows SSL Grade per Host and IP address combo. 
 - Error Codes types are combined for exit code with bitwise or.
 - Runs requests in parallel when under api limits, but writes to console in order of scan finishing first.
+- Add custom details or checks using [JmesPath](http://jmespath.org) queries
 
 ## Example Standard Output
 
@@ -84,4 +94,13 @@ myekon.com:
 
 Completed: 7/17/2019 2:05:49 PM
 All Clear.
+```
+
+## JmsePath Examples
+
+```bash
+# Explicitly warn if TLS 1.0 is not disabled
+endpoints[].details[].protocols[] | [?name=='TLS' && version=='1.0'] | warn(@)
+# display specific values
+endpoints[].[ipAddress, details.ocspStapling] | info(@)
 ```
