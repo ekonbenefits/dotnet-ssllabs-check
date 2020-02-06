@@ -145,7 +145,7 @@ let hostJsonProcessor (queries: string seq) (data: Host.Root option)  =
             yield consoleN "  Certificate #%i %s %i bit:" (i+1) cert.KeyAlg cert.KeySize
             yield consoleN "    SAN: %s" (cert.AltNames |> String.join ", ")
             let expireSpan = endDate - DateTimeOffset DateTime.UtcNow
-            let warningSpan = if endDate - startDate > TimeSpan.FromDays 90.0 then
+            let warningSpan = if endDate - startDate > TimeSpan.FromDays 365.0 then
                                     TimeSpan.FromDays 90.0
                                 else
                                     TimeSpan.FromDays 30.0

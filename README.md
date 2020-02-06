@@ -50,7 +50,7 @@ Options:
 ## Features
 
 - Clearly displays time to expiration for leaf certificates (if RSA and EC are both served then both are listed).
-- Highlights expiring certificates if 90 Days, if original certificate validatity period is 90 days or under (Let's Encrypt) then uses 30 days.
+- Highlights expiring certificates if 90 Days, if original certificate validatity period is 365 days or under (assumes those are automated renewals) then uses 30 days.
 - Shows SSL Grade per Host and IP address combo. 
 - Error Codes types are combined for exit code with bitwise or.
 - Runs requests in parallel when under api limits, but writes to console in order of scan finishing first.
